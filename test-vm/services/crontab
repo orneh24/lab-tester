@@ -1,0 +1,11 @@
+# lab-tester cron entries
+# Installed by setup.sh, which MERGES these lines into root's existing
+# crontab. Never run `crontab <file>` with this: that replaces root's crontab
+# wholesale and drops Alpine's run-parts entries, so /etc/periodic/* — the
+# daily logrotate run included — stops firing and the disk fills.
+
+# Re-register with the hub every 5 minutes
+*/5 * * * * /usr/local/bin/lab-tester/register.sh >> /var/log/lab-tester/register.log 2>&1
+
+# Run connectivity test cycle every minute
+* * * * * /usr/local/bin/lab-tester/test-cycle.sh >> /var/log/lab-tester/test-cycle.log 2>&1

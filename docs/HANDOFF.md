@@ -1,0 +1,270 @@
+# Lab-Tester — Session Handoff
+
+Last updated: 2026-09-11. Written so a fresh session on any surface (Claude Code
+in the terminal, the desktop app, claude.ai) can pick up without the prior chat.
+Architecture lives in `CLAUDE.md`, build order and the deployment checklist in
+`docs/DEPLOYMENT.md`, step detail in `docs/BUILD_GUIDE.md`. This file is state
+and intent only.
+
+**Reminder/To-Do list — answered 2026-09-11:**
+1. *How DNS tests work* — `test-cycle.sh:run_dns_test` (`dig +short`, `bind-tools`
+   package), run against the configured resolver (`DNS_SERVER`, once per cycle)
+   and/or against any static target whose `tests` list includes `dns`. Only
+   runs when `DNS_SERVER` is set or a static target declares it — otherwise
+   silently skipped, no red cell.
+2. *Is DNS visible on the dashboard* — yes, its own panel (`#dns-section`),
+   deliberately outside the pair matrix: `dns` is one test per source against
+   a resolver, not a source→target pair, so `PAIR_TEST_TYPES` excludes it and
+   it would only ever render as a permanently grey matrix column otherwise.
+3. *Can hub/clients verify a valid NTP source* — hub: yes, `GET /api/time`
+   parses `chronyc tracking` (stratum, offset, synced, `local_only` fallback)
+   and never fails hard. It was rendered on `/syslog` only; **now also on the
+   main dashboard** (see Recent changes below). Clients: no — chrony is
+   installed on test VMs but nothing configures, checks, or reports their sync
+   state. Still open; see Designed-but-NOT-implemented.
+4. *ARP table on the dashboard* — recommended against. ARP only reflects a
+   VM's own L2 segment; every tested pair crosses a router, so it would show
+   one router MAC and nothing about the paths this tool exists to test. Not
+   pursued.
+5. *CSR config (networks, VLANs) on the dashboard* — recommended against. Would
+   require the hub authenticating to every router (a trust relationship this
+   design deliberately avoids — it tests *through* routers, never manages
+   them) and a config parser that drifts against IOS versions. Belongs in a
+   Netmiko/NAPALM tool against the CSRs directly, not this connectivity
+   tester. Not pursued.
+
+> **Read the "Designed but NOT implemented" section before trusting anything
+> here.** An earlier revision of this file described a body of work as
+> delivered that had never landed in the code — `/api/time`, the config file
+> server, NTP service, per-interface network state. Someone following it would
+> have run helpers that do not exist and verified behaviour that could not
+> occur. Every claim below was re-checked against the code on 2026-09-10; the
+> unimplemented ones were moved, not deleted, because the intent is still
+> sound.
+
+## Recent changes
+
+**Hub NTP-sync indicator added to the main dashboard (2026-09-11).**
+`GET /api/time` (added 2026-09-10) was rendered on `/syslog` only. The same
+endpoint is now also polled from `templates/dashboard.html` (`loadClock()`,
+60s interval) into a `#clock` span in the header status bar — red when the
+hub has no chrony info or is on chrony's `local_only` stratum-10 fallback
+(no reachable upstream NTP server), yellow for a synced-but->100ms offset,
+green otherwise. No backend change; reuses the existing route and its
+never-500s contract. Regression suite run against it: **CLEAR**, 22/22
+constraints plus the wire contract and R21/R22, 0 failures, 0 skipped —
+confirmed the diff is additive-only and does not touch `/api/time`,
+`/syslog`'s own separate clock implementation, or any wire-contract field.
+
+**Test-VM config requires three variables — reducing it to one was designed,
+never built.** `register.sh` validates `HUB_URL`, `ROUTER_NAME` *and* `SUBNET`,
+and `exit 1`s on the first empty one. There is no `subnet_from_cidr()` anywhere
+in the tree and no defaulting of `ROUTER_NAME`.
+
+The argument for reducing it still stands: each required variable is another way
+for a clone to fail silently, since an unregistered VM is simply invisible in
+the matrix rather than visibly broken. But until someone writes the derivation,
+all three must be set per clone — `BUILD_GUIDE` §8.4 is the accurate account.
+This entry described the intended design as delivered for some time; corrected
+2026-09-10.
+
+**Syslog receiver wired up (2026-09-10).**
+`hub/app/syslog_server.py` and `templates/syslog.html` had been in the tree for
+some time as *dead code* — no config keys, no table, no routes, and nothing
+calling `start()`. All four were added:
+
+- `config.py`: `SYSLOG_ENABLED`, `SYSLOG_BIND`, `SYSLOG_PORT`,
+  `SYSLOG_MAX_ROWS`, `BUSY_TIMEOUT_MS`, all overridable from `hub.env`, which
+  `build-template.sh` now writes.
+- `app.py`: the `syslog` table plus indexes on `received_at` and `host`;
+  `GET /api/syslog` (`minutes` | `from`/`to`, `host`, `severity`, `q`,
+  `limit`), `GET /api/syslog/sources`, `GET /syslog`.
+- `serve.py` calls `syslog_server.start()` — after the schema exists, and
+  tolerant of a failed bind, because a syslog problem must never stop the hub
+  collecting results.
+
+Row cap only (`HUB_SYSLOG_MAX_ROWS`, default 300000), enforced every 500
+inserts by an indexed delete on `id`.
+
+**Correlation from the dashboard (2026-09-10).**
+Each test card in the drill-down links to `/syslog` pinned to ±5 min around
+*that sample*; the pair header links to the same window plus one link per
+router behind the pair. `GET /api/time` reports chrony's tracking state and the
+syslog header renders it — the pinning is only meaningful if the hub's clock is
+disciplined, so an undisciplined one is surfaced rather than left to misalign
+every window silently.
+
+**Fixes from a code review of the syslog work (2026-09-10).**
+
+1. *`received_at` shipped raw from `/api/results`.* Both results routes
+   returned `jsonify([dict(r) for r in rows])`, emitting SQLite's
+   space-separated form while `/endpoints` emitted ISO. `result_row()` now
+   applies `iso()` in both. The dashboard's `parseTs()` had been masking it, so
+   the page looked correct while the API lied to every other consumer.
+2. *Explicit JSON `null` discarded whole batches.* `.get(k, default)` returns
+   the default only when the key is *absent*, so `{"target_ip": null}` hit a
+   `NOT NULL` column, raised `IntegrityError`, skipped the commit and lost
+   every other row in the push. Now coerced explicitly. Constraint 19.
+3. *`allow_reuse_address` on the UDP listener.* `SO_REUSEADDR` does not
+   reliably reject a duplicate UDP bind, so `run.sh` alongside the service
+   would split datagrams between two processes and two databases. Removed.
+   Constraint 20.
+4. *`busy_timeout` set after `journal_mode`*, leaving that statement
+   unprotected, and absent entirely from `init_db()`. Now first on all three
+   connections. Constraint 17.
+5. *Syslog stored ISO timestamps* while everything else used SQLite's format —
+   constraint 2 in a new place. Now identical formats, `iso()` on the way out.
+   Constraint 18.
+6. *Diagnostics used `print()`*, which under OpenRC is block-buffered into the
+   service log and never flushed, so `[syslog] listening on …` — the line
+   DEPLOYMENT tells you to look for — never appeared. Now `sys.stderr`.
+7. *Unparseable lines got fake hostnames.* `kernel: out of memory` was filed
+   under host `kernel`, which then appeared as its own device in the source
+   filter. A `word:` prefix is now only an origin-id when a timestamp or
+   `%MNEMONIC` follows.
+8. *One fsync per datagram* capped the single-threaded drain at ~500 msg/s,
+   inside what a router at debug level produces. The listener's connection uses
+   `synchronous=NORMAL` (safe under WAL; the results path is untouched).
+9. *`/api/results?minutes=-5`* built `'--5 minutes'`, which SQLite evaluates to
+   NULL — an empty matrix with a 200, indistinguishable from a dead lab.
+
+`CLAUDE.md`'s numbered constraint list now runs to 20. The `regression-tester`
+agent has a check per constraint (R1–R20) plus a wire-contract tier.
+
+## Designed but NOT implemented
+
+Verified absent from the code on 2026-09-10. Kept because the intent is sound,
+but **nothing here works today**:
+
+- **Hub as the lab's NTP source.** `chrony` is installed and `chronyd` enabled
+  by `hub/build-template.sh`, so `/api/time` reports real tracking state — but
+  no `chrony.conf` is written, there is no `set-ntp-clients` helper and no
+  access list, and `test-vm/scripts/setup.sh` does not configure chrony on the
+  VMs. The hub disciplines its own clock and serves time to nobody.
+- **Config file server.** No `lab-tester-serve` service, no `publish-config`
+  helper, no port 8080, no `/etc/conf.d/lab-tester-serve`, no `SERVE_BIND`.
+  The intent — read-only config files for routers to pull with `copy http://`,
+  no write path, applied via `copy` → `verify /md5` → `reload in 5` →
+  `configure replace` rather than `copy <url> running-config`, which merges —
+  is worth keeping if it is ever built.
+- **`set-static-ip` per-interface state.** The helper takes
+  `<ip/cidr> <gateway>` only; there is no interface argument and no
+  `/etc/lab-tester/net.d`. Configuring a second NIC still overwrites the first.
+- **`/etc/sysctl.d/99-lab-tester.conf` pinning `net.ipv4.ip_forward=0`.**
+  Absent, which matters for the management-separation design below.
+- **Time-based syslog pruning.** Syslog is row-capped only. (`results` *does*
+  have working time-based retention via `HUB_RESULT_RETENTION_HOURS`, swept on
+  each `POST /results` — constraint 8.)
+
+## Open items
+
+- **Syslog has never run on the real hub VM.** Everything so far is a local
+  Python process on a workstation. Confirm the OpenRC service starts the
+  listener, that UDP/514 binds under it (514 is privileged — the service runs
+  as root, so this should hold), and that routers' packets actually arrive.
+- **`/api/time` and the dashboard correlation links now have suite coverage**
+  (R21 and R22, added 2026-09-10). R21 drives all eight `chronyc` states through
+  the route with a faked binary, since the workstation only ever exercises the
+  "not installed" path; R22 replays a generated window against a live
+  `/api/syslog`, including the `+02:00` truncation probe. Both are suite-only
+  checks — CLAUDE.md's numbered list stays at 20, because that list is a bug log
+  and neither of these has failed yet.
+  What remains hand-verified only is the **rendering**: that the clock indicator
+  actually colours red/amber/green and that the links are clickable in a
+  browser. No headless check reaches that.
+- **Severity filter and unparseable lines — decided, 2026-09-10.**
+  `/api/syslog` now applies `(severity <= ? OR severity IS NULL)`, so a line
+  the parser could not assign a severity to stays visible under every severity
+  filter. The old clause dropped it, which contradicted the parser's own
+  principle that a message you cannot parse is often the one you most want to
+  see. Cost of the decision: an unparseable line shows up even when filtering
+  for emergencies only, so a noisy unrecognised format cannot be filtered out
+  by severity — judged the better failure of the two.
+- **No IP→router map.** Sender identity is the parsed syslog hostname, falling
+  back to source IP. Where a router's syslog hostname differs from its
+  `ROUTER_NAME`, the dashboard's filtered link returns an empty view while the
+  unfiltered ±5 min link beside it still works — empty rather than wrong, by
+  design. A `lab.yaml`/`routers.json` map would fix it properly.
+- **Hostname is still the one per-clone input.** `setup.sh` takes it from
+  `guestinfo.lab.hostname` or derives it from the router slug. Deriving it from
+  IP or MAC at first boot would remove the last manual step and the
+  duplicate-hostname failure mode (constraint 1).
+- **Management separation: designed and supported, not yet deployed.** The
+  design: router management interfaces in a VRF (`MGMT` or the built-in
+  `Mgmt-intf`), hub dual-homed with NIC1 on the test-VM segment and NIC2 on the
+  management VLAN, test VMs never on that VLAN, `ip_forward=0` on the hub (see
+  above — not yet pinned). The risk it addresses is not the hub reporting path;
+  it is that a shared management VLAN gives the *routers* a path to each other
+  outside the tested topology, so leaked routing would turn the matrix green
+  while measuring nothing.
+- **No vCenter tooling, deliberately.** Deployment is clone → correct port
+  group → power on. `govc` + a `lab.yaml` manifest is the option if the
+  topology starts churning; Packer if the golden image gets rebuilt often. A
+  manifest would also enable an expected-vs-registered check, which the
+  dashboard cannot do today.
+
+## Conventions that must not drift
+
+- **The wire contract is frozen** unless the golden image is rebuilt:
+  `/register` requires hostname, ip, subnet, router; `/results` uses the
+  documented field names. Renaming a field breaks every deployed VM silently.
+- **Test VM scripts are BusyBox ash**, `#!/bin/sh` with `set -u`. No bashisms.
+- **Timestamps are stored in SQLite's `YYYY-MM-DD HH:MM:SS`**, in every table,
+  and converted to ISO-8601 with `Z` by `iso()` on the way out. Window queries
+  compare `received_at` against `datetime('now', ...)`. Do **not** store the
+  ISO form: `T` (0x54) sorts above space (0x20), so a mixed comparison lets any
+  same-day row pass any window. This is constraint 2, and it has now been
+  reintroduced twice — once in `/api/results` output, once in the syslog
+  writer.
+- **`results` is append-only.** The timeline depends on it.
+- **Free text into JSON goes through `json_escape()`**, or the hub rejects the
+  whole cycle.
+- **Numbers in JSON are built with arithmetic**, never string concatenation —
+  `printf '%d000'` emits `0000`, which Python's parser rejects while `jq`
+  accepts it, so the hub 400s the entire batch. Constraint 9.
+
+## Running the hub locally
+
+`serve.py` is the entrypoint — it reads `HUB_PORT` at runtime and starts the
+syslog listener. Do not run `flask run` against `app/app.py`; that skips the
+listener entirely and uses the single-threaded dev server.
+
+```sh
+cd hub
+HUB_DB_PATH=/tmp/hub.db HUB_PORT=8099 HUB_SYSLOG_PORT=5514 python3 serve.py
+```
+
+`hub.env` is picked up by `run.sh` if present, so a manual run matches the
+service. Ports below 1024 need root; override `HUB_SYSLOG_PORT` when testing as
+an ordinary user.
+
+Send a test message:
+
+```sh
+python3 -c "import socket;socket.socket(socket.AF_INET,socket.SOCK_DGRAM).sendto(
+b'<187>12: R1: *Sep  8 12:00:00.000 UTC: %OSPF-5-ADJCHG: Nbr 10.0.0.2 FULL to DOWN',
+('127.0.0.1',5514))"
+curl -s 'http://127.0.0.1:8099/api/syslog?minutes=5'
+```
+
+Note that importing `app.app` runs `init_db()` at module scope, so any script
+that imports it creates a database in the current directory unless `HUB_DB_PATH`
+is set. Set it.
+
+## Skills and agents
+
+12 skills in `skills/` and 9 agents in `.claude/agents/` (a real directory, not
+a junction). Project-specific skills: `lab-tester-hub-api`,
+`lab-tester-test-vm`, `lab-tester-troubleshooting`. Project-specific agents:
+
+| Agent | Use |
+|---|---|
+| `regression-tester` | Gate before handing over any change. One check per numbered constraint, plus live-hub and wire-contract tiers. |
+| `drift-checker` | Docs, config samples, UI labels and agent definitions vs. what the code does. |
+| `hub-api-developer` | Changes under `hub/` — routes, schema, dashboard. |
+| `alpine-vm-builder` | Anything running on the test VMs. |
+| `lab-tester-diagnostician` | Triage when the dashboard looks wrong. |
+| `test-result-analyst` | Interpreting collected results rather than fixing an outage. |
+
+The `network-*` agents are generic and carry no project content. Read the
+relevant skill before changing the code it covers.

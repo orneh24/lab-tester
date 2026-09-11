@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab Connectivity Tester</title>
+<link rel="icon" href="/favicon.ico" type="image/svg+xml">
+<style>
+:root {
+    --bg:        #0d1117;
+    --bg-card:   #161b22;
+    --bg-hover:  #1c2128;
+    --border:    #30363d;
+    --text:      #c9d1d9;
+    --text-dim:  #8b949e;
+    --green:     #3fb950;
+    --green-bg:  #0f2d1a;
+    --red:       #f85149;
+    --red-bg:    #3d1214;
+    --yellow:    #d29922;
+    --yellow-bg: #2e2213;
+    --gray:      #484f58;
+    --blue:      #58a6ff;
+    --cyan:      #39d2c0;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', 'Monaco', monospace;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+}
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Layout */
+.header {
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--cyan);
+    letter-spacing: 0.5px;
+}
+.header .status {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.header .status .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    margin-right: 6px;
+    vertical-align: middle;
+    animation: pulse 2s infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+.container {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    grid-template-rows: auto 1fr;
+    gap: 16px;
+    padding: 16px 24px;
+    max-height: calc(100vh - 52px);
+}
+.section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.section-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.section-body {
+    padding: 12px 16px;
+    overflow: auto;
+}
+
+/* Main column: mesh matrix, static targets, DNS.
+   Sections size to their content rather than one panel stretching to fill
+   the viewport, which previously left most of the page empty at 5 VMs. */
+.main-col {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+    overflow-y: auto;
+}
+.main-col > .section { flex: 0 0 auto; }
+.scroll-x { overflow-x: auto; }
+
+.health-ok   { color: var(--green); }
+.health-bad  { color: var(--red); font-weight: 600; }
+
+.clock       { font-size: 11px; }
+.clock.ok    { color: var(--green); }
+.clock.warn  { color: var(--yellow); }
+.clock.bad   { color: var(--red); font-weight: 600; }
+
+.hdr-actions { display: flex; gap: 6px; }
+.btn-small {
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.btn-small:hover { color: var(--text); border-color: var(--blue); }
+
+.empty-hint {
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1.6;
+    padding: 10px 2px;
+    max-width: 60ch;
+}
+.empty-hint code {
+    background: var(--bg-hover);
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: var(--cyan);
+}
+
+/* Matrix */
+.matrix {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+}
+.matrix th {
+    position: sticky;
+    background: var(--bg-card);
+    z-index: 2;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+}
+.matrix th.origin {
+    top: 0;
+    left: 0;
+    z-index: 3;
+}
+.matrix thead th {
+    top: 0;
+    text-align: center;
+}
+.matrix tbody th {
+    left: 0;
+    text-align: right;
+    border-right: 1px solid var(--border);
+}
+.matrix td {
+    text-align: center;
+    padding: 6px 8px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+}
+.matrix td:hover {
+    background: var(--bg-hover);
+}
+.matrix td.selected {
+    background: var(--bg-hover);
+    outline: 2px solid var(--blue);
+    outline-offset: -2px;
+}
+.matrix td.self {
+    cursor: default;
+    background: #0d1117;
+}
+.cell-indicators {
+    display: flex;
+    gap: 3px;
+    justify-content: center;
+    align-items: center;
+}
+.indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.4);
+}
+.indicator.pass { background: var(--green); }
+.indicator.fail { background: var(--red); }
+.indicator.none { background: var(--gray); color: var(--text-dim); }
+.indicator-label { font-size: 8px; letter-spacing: 0; }
+
+.th-sub {
+    font-size: 9px;
+    font-weight: 400;
+    color: var(--gray);
+    margin-top: 2px;
+}
+.target-th { cursor: pointer; }
+.target-th:hover { color: var(--red); }
+.cell-na { color: var(--gray); font-size: 10px; }
+.dim { color: var(--gray); font-size: 10px; }
+.dns-out {
+    color: var(--text-dim);
+    max-width: 42ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Sidebar */
+.sidebar {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+    max-height: calc(100vh - 84px);
+}
+.endpoints-section {
+    flex: 0 0 auto;
+    max-height: 35%;
+}
+.endpoints-section .section-body {
+    overflow: auto;
+    max-height: 200px;
+}
+.detail-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.detail-section .section-body {
+    overflow: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Endpoint list */
+.ep-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.ep-table th {
+    text-align: left;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+}
+.ep-table td {
+    padding: 5px 8px;
+    font-size: 12px;
+    border-bottom: 1px solid #21262d;
+    white-space: nowrap;
+}
+.ep-table tr:hover td { background: var(--bg-hover); }
+.ep-table .stale td { color: var(--yellow); }
+.ep-table .router-badge {
+    display: inline-block;
+    background: #1a2332;
+    border: 1px solid #253040;
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-size: 10px;
+    color: var(--blue);
+}
+.ep-table .btn-delete {
+    background: none;
+    border: none;
+    color: var(--red);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+    opacity: 0.5;
+}
+.ep-table .btn-delete:hover { opacity: 1; }
+
+/* Detail panel */
+.detail-empty {
+    color: var(--text-dim);
+    text-align: center;
+    padding: 32px 16px;
+    font-size: 12px;
+}
+.detail-pair {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--cyan);
+}
+.detail-syslog {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin: -6px 0 12px 0;
+}
+.detail-syslog a { color: var(--cyan); text-decoration: none; }
+.detail-syslog a:hover { text-decoration: underline; }
+.detail-syslog .sep { opacity: .5; margin: 0 6px; }
+.detail-test-syslog {
+    font-size: 11px;
+    margin-left: 12px;
+}
+.detail-test-syslog a { color: var(--text-dim); text-decoration: none; }
+.detail-test-syslog a:hover { color: var(--cyan); text-decoration: underline; }
+.detail-tests {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.detail-test-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.detail-test-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+}
+.detail-test-header:hover { background: var(--bg-hover); }
+.detail-test-type {
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.detail-test-status {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 3px;
+}
+.detail-test-status.pass { background: var(--green-bg); color: var(--green); }
+.detail-test-status.fail { background: var(--red-bg); color: var(--red); }
+.detail-test-status.none { background: #21262d; color: var(--text-dim); }
+.detail-test-meta {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    border-bottom: 1px solid #21262d;
+}
+.detail-test-meta span { margin-right: 16px; }
+.detail-test-output {
+    display: none;
+    padding: 10px 12px;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow: auto;
+    background: #010409;
+    color: var(--text-dim);
+    line-height: 1.6;
+}
+.detail-test-output.open { display: block; }
+.latency-val { color: var(--yellow); font-weight: 600; }
+
+/* Legend */
+.legend {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: 10px;
+    color: var(--text-dim);
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 2px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>LAB CONNECTIVITY TESTER</h1>
+    <div class="status">
+        <span class="dot"></span>
+        <span id="refresh-status">Auto-refresh: 30s</span>
+        &nbsp;|&nbsp;
+        <span id="last-update">--</span>
+        &nbsp;|&nbsp;
+        <span id="ep-count">0 endpoints</span>
+        &nbsp;|&nbsp;
+        <span id="health-summary" class="health-ok">&mdash;</span>
+        &nbsp;|&nbsp;
+        <span id="clock" class="clock" title="Hub's own NTP sync state (chronyc tracking)">clock: --</span>
+    </div>
+</div>
+
+<div class="container">
+    <!-- Main column -->
+    <div class="main-col">
+        <div class="section">
+            <div class="section-header">
+                <span>Connectivity Matrix</span>
+                <div class="legend">
+                    <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Pass</div>
+                    <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Fail</div>
+                    <div class="legend-item"><div class="legend-dot" style="background:var(--gray)"></div>No data</div>
+                    <!-- Built from TYPE_LABELS so it can never drift from what
+                         the cells actually render. -->
+                    <span style="margin-left:8px" id="type-legend"></span>
+                </div>
+            </div>
+            <div class="section-body scroll-x">
+                <table class="matrix" id="matrix">
+                    <thead><tr><th class="origin"></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Static targets: addresses that run no agent, so they can never
+             appear in the mesh matrix above. Their results were previously
+             collected and stored but had nowhere to render. -->
+        <div class="section" id="targets-section">
+            <div class="section-header">
+                <span>Static Targets</span>
+                <span class="hdr-actions">
+                    <button class="btn-small" id="btn-add-target">+ add</button>
+                </span>
+            </div>
+            <div class="section-body scroll-x">
+                <table class="matrix" id="targets-matrix">
+                    <thead><tr><th class="origin"></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="empty-hint" id="targets-empty">
+                    No static targets configured.
+                    Add a router loopback or an outside address to test reachability
+                    to things that run no agent.
+                </div>
+            </div>
+        </div>
+
+        <!-- DNS is one test per source against a resolver, not a property of a
+             source->target pair, so it cannot light up in a grid. It lives
+             here instead of occupying a permanently grey matrix column. -->
+        <div class="section" id="dns-section">
+            <div class="section-header"><span>DNS Resolution</span></div>
+            <div class="section-body">
+                <table class="ep-table" id="dns-table">
+                    <thead><tr><th>Source</th><th>Resolver</th><th>Result</th><th>Status</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="empty-hint" id="dns-empty">
+                    No DNS tests running. Set <code>DNS_SERVER</code> in a test VM's
+                    config, or add a static target with the <code>dns</code> test.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="section endpoints-section">
+            <div class="section-header">
+                <span>Registered Endpoints</span>
+                <span id="stale-warning" style="color:var(--yellow);display:none">stale detected</span>
+            </div>
+            <div class="section-body">
+                <table class="ep-table" id="ep-table">
+                    <thead>
+                        <tr>
+                            <th>Host</th>
+                            <th>IP</th>
+                            <th>Router</th>
+                            <th>Seen</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="section detail-section">
+            <div class="section-header">
+                <span>Test Detail</span>
+                <span id="detail-close" style="cursor:pointer;display:none;color:var(--text-dim)">&times;</span>
+            </div>
+            <div class="section-body" id="detail-body">
+                <div class="detail-empty">Click a matrix cell to inspect test results</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    "use strict";
+
+    // Types that describe a source -> target pair, and so belong in a grid.
+    // DNS is deliberately absent: it is one test per source against a
+    // resolver, so it could only ever render as a permanently grey column.
+    // It gets its own panel instead.
+    var PAIR_TEST_TYPES = ["http", "ssh", "traceroute", "pmtu", "iperf3"];
+    var TYPE_LABELS = {
+        http: "H", ssh: "S", traceroute: "T",
+        pmtu: "M",          // path MTU — catches a tunnel that passes small
+                            // packets while large transfers hang
+        dns: "D", iperf3: "I"
+    };
+    var TYPE_NAMES = {
+        http: "HTTP", ssh: "SSH", traceroute: "Trace",
+        pmtu: "PMTU", dns: "DNS", iperf3: "iperf"
+    };
+    // Whole-second granularity: reporting "0.0 ms" for these implies a
+    // precision the measurement does not have.
+    var COARSE_TIMING = {ssh: 1, traceroute: 1, pmtu: 1, dns: 1, iperf3: 1};
+
+    var endpoints = [];
+    var targets = [];
+    var resultsData = [];
+    var selectedPair = null; // {source, target}
+
+    // ---------------------------------------------------------------
+    // Fetching
+    // ---------------------------------------------------------------
+    function fetchJSON(url) {
+        return fetch(url).then(function(r) { return r.json(); });
+    }
+
+    function refresh() {
+        Promise.all([
+            fetchJSON("/endpoints"),
+            fetchJSON("/api/results?minutes=10"),
+            fetchJSON("/targets")
+        ]).then(function(arr) {
+            endpoints = arr[0];
+            resultsData = arr[1];
+            targets = arr[2];
+            renderLegend();
+            renderMatrix();
+            renderTargets();
+            renderDNS();
+            renderEndpoints();
+            renderHealth();
+            if (selectedPair) loadDetail(selectedPair.source, selectedPair.target);
+            document.getElementById("last-update").textContent = "Updated: " + new Date().toLocaleTimeString();
+            document.getElementById("ep-count").textContent = endpoints.length + " endpoint" + (endpoints.length !== 1 ? "s" : "");
+        });
+    }
+
+    // ---------------------------------------------------------------
+    // Legend — generated, so it cannot drift from what cells render
+    // ---------------------------------------------------------------
+    function renderLegend() {
+        // Mirror activePairTypes() rather than the full list: advertising
+        // "I=iperf" while no cell draws an I is the same drift the hardcoded
+        // legend had.
+        var types = activePairTypes();
+        var parts = [];
+        for (var i = 0; i < types.length; i++) {
+            parts.push(TYPE_LABELS[types[i]] + "=" + TYPE_NAMES[types[i]]);
+        }
+        document.getElementById("type-legend").textContent = parts.join(" ");
+    }
+
+    // ---------------------------------------------------------------
+    // Hub clock — surfaces a hub that cannot sync from its NTP source.
+    // Every timestamp the dashboard shows is the hub's own, so an
+    // undisciplined clock (no reachable server, or the "local" stratum-10
+    // fallback) needs to be visible here, not just on /syslog.
+    // ---------------------------------------------------------------
+    function loadClock() {
+        fetch("/api/time")
+            .then(function(r) { return r.json(); })
+            .then(function(t) {
+                var el = document.getElementById("clock");
+                if (!t.chrony) {
+                    el.className = "clock bad";
+                    el.textContent = "clock: NTP sync unknown (" + (t.reason || "no chrony") + ")";
+                    return;
+                }
+                var c = t.chrony;
+                var ms = c.system_offset_s === null ? null : Math.abs(c.system_offset_s * 1000);
+                var parts = ["stratum " + c.stratum];
+                if (ms !== null) parts.push((ms < 1 ? ms.toFixed(2) : ms.toFixed(1)) + " ms off");
+                if (c.local_only) parts.push("no upstream — local clock only");
+                else if (c.source) parts.push("via " + c.source);
+
+                if (!c.synced || c.local_only) el.className = "clock bad";
+                else if (ms !== null && ms > 100) el.className = "clock warn";
+                else el.className = "clock ok";
+
+                el.textContent = "clock: " + parts.join(", ") + (c.synced ? "" : " — NTP UNSYNCED");
+            })
+            .catch(function() {
+                var el = document.getElementById("clock");
+                el.className = "clock bad";
+                el.textContent = "clock: NTP status unavailable";
+            });
+    }
+
+    // ---------------------------------------------------------------
+    // Health summary — answers "is anything broken?" without a scan
+    // ---------------------------------------------------------------
+    function renderHealth() {
+        var lookup = buildLookup();
+        var failing = {};
+        var total = 0, failed = 0;
+        for (var k in lookup) {
+            if (!lookup.hasOwnProperty(k)) continue;
+            total++;
+            if (!lookup[k].success) {
+                failed++;
+                var pair = k.split("|");
+                failing[pair[0] + "|" + pair[1]] = true;
+            }
+        }
+        var pairCount = Object.keys(failing).length;
+        var el = document.getElementById("health-summary");
+        if (total === 0) {
+            el.textContent = "no results yet";
+            el.className = "health-ok";
+        } else if (failed === 0) {
+            el.textContent = "all " + total + " tests passing";
+            el.className = "health-ok";
+        } else {
+            el.textContent = pairCount + " path" + (pairCount !== 1 ? "s" : "") +
+                             " failing (" + failed + " test" + (failed !== 1 ? "s" : "") + ")";
+            el.className = "health-bad";
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Matrix
+    // ---------------------------------------------------------------
+    function buildLookup() {
+        // key: source|target|type -> latest result
+        var map = {};
+        // results are sorted desc by timestamp from API, so first hit is latest
+        for (var i = 0; i < resultsData.length; i++) {
+            var r = resultsData[i];
+            var key = r.source + "|" + r.target_hostname + "|" + r.test_type;
+            if (!map[key]) map[key] = r;
+        }
+        return map;
+    }
+
+    function renderMatrix() {
+        var table = document.getElementById("matrix");
+        var thead = table.querySelector("thead");
+        var tbody = table.querySelector("tbody");
+        var hosts = endpoints.map(function(e) { return e.hostname; });
+        var lookup = buildLookup();
+
+        // Header row
+        var hrow = "<th class='origin'>src \\ dst</th>";
+        for (var j = 0; j < hosts.length; j++) {
+            hrow += "<th>" + esc(hosts[j]) + "</th>";
+        }
+        thead.innerHTML = "<tr>" + hrow + "</tr>";
+
+        // Body
+        var html = "";
+        for (var i = 0; i < hosts.length; i++) {
+            html += "<tr><th>" + esc(hosts[i]) + "</th>";
+            for (var j = 0; j < hosts.length; j++) {
+                if (i === j) {
+                    html += "<td class='self'>&mdash;</td>";
+                    continue;
+                }
+                var sel = selectedPair && selectedPair.source === hosts[i] && selectedPair.target === hosts[j];
+                html += "<td data-src='" + esc(hosts[i]) + "' data-dst='" + esc(hosts[j]) + "'" + (sel ? " class='selected'" : "") + ">";
+                html += renderIndicators(hosts[i], hosts[j], lookup, activePairTypes());
+                html += "</td>";
+            }
+            html += "</tr>";
+        }
+        tbody.innerHTML = html;
+
+        // Attach click handlers
+        var cells = tbody.querySelectorAll("td[data-src]");
+        for (var c = 0; c < cells.length; c++) {
+            cells[c].addEventListener("click", onCellClick);
+        }
+    }
+
+    // Only draw types that actually have data somewhere. iperf is off by
+    // default, so drawing a permanently grey "I" in every cell was a sixth
+    // of the grid spent on noise.
+    function activePairTypes() {
+        var seen = {};
+        for (var i = 0; i < resultsData.length; i++) seen[resultsData[i].test_type] = true;
+        var out = [];
+        for (var t = 0; t < PAIR_TEST_TYPES.length; t++) {
+            if (seen[PAIR_TEST_TYPES[t]]) out.push(PAIR_TEST_TYPES[t]);
+        }
+        // Before any results arrive, show the standard set rather than nothing.
+        return out.length ? out : ["http", "ssh", "traceroute", "pmtu"];
+    }
+
+    function renderIndicators(src, dst, lookup, types) {
+        var html = "<div class='cell-indicators'>";
+        for (var t = 0; t < types.length; t++) {
+            var res = lookup[src + "|" + dst + "|" + types[t]];
+            var cls = res ? (res.success ? "pass" : "fail") : "none";
+            var tip = TYPE_NAMES[types[t]] + (res ? (res.success ? " — pass" : " — FAIL") : " — no data");
+            html += "<div class='indicator " + cls + "' title='" + esc(tip) + "'>" + TYPE_LABELS[types[t]] + "</div>";
+        }
+        return html + "</div>";
+    }
+
+    // ---------------------------------------------------------------
+    // Static targets
+    //
+    // Rows are source VMs, columns are targets — the same shape as the mesh
+    // matrix, so it reads the same way. Only the tests each target declares
+    // are drawn, since a loopback has no HTTP server to answer.
+    // ---------------------------------------------------------------
+    function renderTargets() {
+        var section = document.getElementById("targets-section");
+        var table = document.getElementById("targets-matrix");
+        var empty = document.getElementById("targets-empty");
+
+        if (!targets.length) {
+            table.style.display = "none";
+            empty.style.display = "";
+            return;
+        }
+        table.style.display = "";
+        empty.style.display = "none";
+
+        var lookup = buildLookup();
+        var hosts = endpoints.map(function(e) { return e.hostname; });
+
+        var hrow = "<th class='origin'>src \\ target</th>";
+        for (var j = 0; j < targets.length; j++) {
+            hrow += "<th class='target-th' data-target='" + esc(targets[j].name) + "' title='" +
+                    esc(targets[j].ip + (targets[j].note ? " — " + targets[j].note : "") + "  (click to remove)") + "'>" +
+                    esc(targets[j].name) + "<div class='th-sub'>" + esc(targets[j].ip) + "</div></th>";
+        }
+        table.querySelector("thead").innerHTML = "<tr>" + hrow + "</tr>";
+
+        var html = "";
+        for (var i = 0; i < hosts.length; i++) {
+            html += "<tr><th>" + esc(hosts[i]) + "</th>";
+            for (var k = 0; k < targets.length; k++) {
+                var declared = targets[k].tests || [];
+                // Intersect declared tests with the pair-shaped ones; DNS is
+                // reported in its own panel.
+                var types = [];
+                for (var d = 0; d < declared.length; d++) {
+                    if (PAIR_TEST_TYPES.indexOf(declared[d]) !== -1) types.push(declared[d]);
+                }
+                var sel = selectedPair && selectedPair.source === hosts[i] && selectedPair.target === targets[k].name;
+                html += "<td data-src='" + esc(hosts[i]) + "' data-dst='" + esc(targets[k].name) + "'" +
+                        (sel ? " class='selected'" : "") + ">";
+                html += types.length ? renderIndicators(hosts[i], targets[k].name, lookup, types)
+                                     : "<span class='cell-na'>dns only</span>";
+                html += "</td>";
+            }
+            html += "</tr>";
+        }
+        table.querySelector("tbody").innerHTML = html;
+
+        var cells = table.querySelectorAll("td[data-src]");
+        for (var c = 0; c < cells.length; c++) cells[c].addEventListener("click", onCellClick);
+    }
+
+    // ---------------------------------------------------------------
+    // DNS panel
+    // ---------------------------------------------------------------
+    function renderDNS() {
+        var tbody = document.querySelector("#dns-table tbody");
+        var table = document.getElementById("dns-table");
+        var empty = document.getElementById("dns-empty");
+
+        // Latest DNS result per source+resolver.
+        var seen = {}, rows = [];
+        for (var i = 0; i < resultsData.length; i++) {
+            var r = resultsData[i];
+            if (r.test_type !== "dns") continue;
+            var key = r.source + "|" + r.target_hostname;
+            if (seen[key]) continue;
+            seen[key] = true;
+            rows.push(r);
+        }
+
+        if (!rows.length) {
+            table.style.display = "none";
+            empty.style.display = "";
+            return;
+        }
+        table.style.display = "";
+        empty.style.display = "none";
+
+        var html = "";
+        for (var j = 0; j < rows.length; j++) {
+            var d = rows[j];
+            // test-cycle.sh labels the configured-resolver test "dns:<ip>";
+            // show the address rather than that internal marker.
+            var resolver = d.target_hostname.indexOf("dns:") === 0
+                         ? d.target_hostname.slice(4) : d.target_hostname;
+            html += "<tr>";
+            html += "<td>" + esc(d.source) + "</td>";
+            html += "<td>" + esc(resolver) + " <span class='dim'>" + esc(d.target_ip) + "</span></td>";
+            html += "<td class='dns-out'>" + esc(d.output || "") + "</td>";
+            html += "<td><span class='detail-test-status " + (d.success ? "pass'>PASS" : "fail'>FAIL") + "</span></td>";
+            html += "</tr>";
+        }
+        tbody.innerHTML = html;
+    }
+
+    function onCellClick(e) {
+        var td = e.currentTarget;
+        var src = td.getAttribute("data-src");
+        var dst = td.getAttribute("data-dst");
+        selectedPair = {source: src, target: dst};
+        // Remove old selection
+        // Two matrices share this class now, so clear every selection
+        // rather than only the first match in DOM order.
+        var prev = document.querySelectorAll(".matrix td.selected");
+        for (var p = 0; p < prev.length; p++) prev[p].classList.remove("selected");
+        td.classList.add("selected");
+        loadDetail(src, dst);
+    }
+
+    // ---------------------------------------------------------------
+    // Endpoints
+    // ---------------------------------------------------------------
+    function renderEndpoints() {
+        var tbody = document.querySelector("#ep-table tbody");
+        var now = Date.now();
+        var staleCount = 0;
+        var html = "";
+        for (var i = 0; i < endpoints.length; i++) {
+            var ep = endpoints[i];
+            var seen = new Date(ep.last_seen);
+            var ago = Math.round((now - seen.getTime()) / 1000);
+            var stale = ago > 300;
+            if (stale) staleCount++;
+            var agoStr = ago < 60 ? ago + "s" : Math.round(ago / 60) + "m";
+            html += "<tr" + (stale ? " class='stale'" : "") + ">";
+            html += "<td>" + esc(ep.hostname) + "</td>";
+            html += "<td>" + esc(ep.ip) + "</td>";
+            html += "<td><span class='router-badge'>" + esc(ep.router) + "</span></td>";
+            html += "<td>" + agoStr + " ago" + (stale ? " !" : "") + "</td>";
+            html += "<td><button class='btn-delete' data-host='" + esc(ep.hostname) + "' title='Remove'>&times;</button></td>";
+            html += "</tr>";
+        }
+        tbody.innerHTML = html;
+
+        var warn = document.getElementById("stale-warning");
+        warn.style.display = staleCount > 0 ? "" : "none";
+
+        // Delete handlers
+        var btns = tbody.querySelectorAll(".btn-delete");
+        for (var b = 0; b < btns.length; b++) {
+            btns[b].addEventListener("click", function(e) {
+                var host = e.currentTarget.getAttribute("data-host");
+                if (confirm("Remove endpoint " + host + "?")) {
+                    fetch("/endpoints/" + encodeURIComponent(host), {method: "DELETE"}).then(function() { refresh(); });
+                }
+            });
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Detail panel
+    // ---------------------------------------------------------------
+    function loadDetail(src, dst) {
+        fetchJSON("/api/results/" + encodeURIComponent(src) + "/" + encodeURIComponent(dst)).then(function(rows) {
+            renderDetail(src, dst, rows);
+        });
+    }
+
+    // Correlation is the reason the syslog receiver exists: a red cell says a
+    // path broke, and the routers say why. These links carry the moment of the
+    // sample across so nobody has to retype a window by hand.
+    var SYSLOG_PIN_MINUTES = 5;
+
+    function syslogUrl(ts, extra) {
+        var anchor = parseTs(ts) || new Date();
+        function z(d) { return d.toISOString().replace(/\.\d+Z$/, "Z"); }
+        var ms = SYSLOG_PIN_MINUTES * 60000;
+        var url = "/syslog?from=" + encodeURIComponent(z(new Date(anchor.getTime() - ms))) +
+                  "&to=" + encodeURIComponent(z(new Date(anchor.getTime() + ms)));
+        return extra ? url + extra : url;
+    }
+
+    // The routers behind a pair, for a sender-filtered link. Best effort by
+    // design: syslog identifies a device by the hostname it puts in its own
+    // messages, which is not necessarily guestinfo.lab.router. An unmatched
+    // name yields an empty view rather than a wrong one, and the unfiltered
+    // window link beside it always works.
+    function pairRouters(src, dst) {
+        var out = [];
+        for (var i = 0; i < endpoints.length; i++) {
+            var e = endpoints[i];
+            if ((e.hostname === src || e.hostname === dst) && e.router &&
+                out.indexOf(e.router) === -1) {
+                out.push(e.router);
+            }
+        }
+        return out;
+    }
+
+    function renderDetail(src, dst, rows) {
+        var body = document.getElementById("detail-body");
+        document.getElementById("detail-close").style.display = "";
+
+        // Group by test_type, keep most recent + history. Show only the
+        // types this pair actually reports, rather than a fixed list with
+        // permanent "No data" cards for tests that never run here.
+        var byType = {};
+        var order = [];
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            if (!byType[r.test_type]) { byType[r.test_type] = []; order.push(r.test_type); }
+            byType[r.test_type].push(r);
+        }
+        order.sort(function(a, b) {
+            var ai = PAIR_TEST_TYPES.indexOf(a), bi = PAIR_TEST_TYPES.indexOf(b);
+            return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+        });
+
+        var html = "<div class='detail-pair'>" + esc(src) + " &rarr; " + esc(dst) + "</div>";
+
+        // Anchored on the most recent sample for this pair — that is the
+        // moment someone clicking a red cell is asking about.
+        var anchorTs = rows.length ? (rows[0].received_at || rows[0].timestamp) : null;
+        html += "<div class='detail-syslog'>syslog: " +
+                "<a href='" + syslogUrl(anchorTs) + "' target='_blank' rel='noopener'>" +
+                "&plusmn;" + SYSLOG_PIN_MINUTES + " min</a>";
+        var routers = pairRouters(src, dst);
+        for (var ri = 0; ri < routers.length; ri++) {
+            html += "<span class='sep'>|</span><a href='" +
+                    syslogUrl(anchorTs, "&host=" + encodeURIComponent(routers[ri])) +
+                    "' target='_blank' rel='noopener' title='Filtered to the syslog hostname " +
+                    esc(routers[ri]) + "; empty if the router logs under a different name'>" +
+                    esc(routers[ri]) + "</a>";
+        }
+        html += "</div>";
+
+        html += "<div class='detail-tests'>";
+
+        if (!order.length) {
+            html += "<div class='detail-empty'>No results recorded for this pair yet.</div>";
+        }
+
+        for (var t = 0; t < order.length; t++) {
+            var type = order[t];
+            var items = byType[type];
+            var latest = items.length > 0 ? items[0] : null;
+
+            var statusCls = "none";
+            var statusLabel = "No data";
+            if (latest) {
+                statusCls = latest.success ? "pass" : "fail";
+                statusLabel = latest.success ? "PASS" : "FAIL";
+            }
+
+            html += "<div class='detail-test-card'>";
+            html += "<div class='detail-test-header' data-type='" + type + "'>";
+            html += "<span class='detail-test-type'>" + esc(TYPE_NAMES[type] || type) + "</span>";
+            html += "<span class='detail-test-status " + statusCls + "'>" + statusLabel + "</span>";
+            html += "</div>";
+
+            if (latest) {
+                html += "<div class='detail-test-meta'>";
+                html += "<span>" + formatLatency(type, latest.latency_ms) + "</span>";
+                html += "<span title='" + esc(latest.received_at || latest.timestamp) + "'>" +
+                        esc(formatWhen(latest.received_at || latest.timestamp)) + "</span>";
+                // Pinned to this sample, not the pair's newest — on a failing
+                // test that is the minute worth reading.
+                html += "<span class='detail-test-syslog'><a href='" +
+                        syslogUrl(latest.received_at || latest.timestamp) +
+                        "' target='_blank' rel='noopener'>syslog &plusmn;" +
+                        SYSLOG_PIN_MINUTES + " min</a></span>";
+                if (items.length > 1) {
+                    // Pass/fail history, newest first.
+                    html += "<br>History: ";
+                    var histCount = Math.min(items.length, 20);
+                    for (var h = 0; h < histCount; h++) {
+                        var hc = items[h].success ? "var(--green)" : "var(--red)";
+                        html += "<span style='display:inline-block;width:8px;height:8px;border-radius:1px;background:" + hc +
+                                ";margin:0 1px' title='" + esc(formatWhen(items[h].received_at || items[h].timestamp)) + "'></span>";
+                    }
+                }
+                html += "</div>";
+                html += "<div class='detail-test-output' id='output-" + type + "'>" + esc(latest.output || "(no output)") + "</div>";
+            }
+
+            html += "</div>";
+        }
+
+        html += "</div>";
+        body.innerHTML = html;
+
+        // Toggle output on header click
+        var headers = body.querySelectorAll(".detail-test-header");
+        for (var h = 0; h < headers.length; h++) {
+            headers[h].addEventListener("click", function(e) {
+                var type = e.currentTarget.getAttribute("data-type");
+                var out = document.getElementById("output-" + type);
+                if (out) out.classList.toggle("open");
+            });
+        }
+    }
+
+    document.getElementById("detail-close").addEventListener("click", function() {
+        selectedPair = null;
+        document.getElementById("detail-body").innerHTML = "<div class='detail-empty'>Click a matrix cell to inspect test results</div>";
+        this.style.display = "none";
+        var prev = document.querySelectorAll(".matrix td.selected");
+        for (var p = 0; p < prev.length; p++) prev[p].classList.remove("selected");
+    });
+
+    // ---------------------------------------------------------------
+    // Utilities
+    // ---------------------------------------------------------------
+    function esc(s) {
+        if (!s) return "";
+        var d = document.createElement("div");
+        d.appendChild(document.createTextNode(s));
+        return d.innerHTML;
+    }
+
+    function parseTs(ts) {
+        if (!ts) return null;
+        // The hub emits ISO-8601 with a Z; anything space-separated would be
+        // read as local time by Date, so normalise before parsing.
+        var s = ts.indexOf("T") === -1 ? ts.replace(" ", "T") + "Z" : ts;
+        var d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    // "2026-09-09T21:29:06.446294+00:00" wrapped onto two lines and told you
+    // nothing at a glance. Relative for recent, clock time beyond that.
+    function formatWhen(ts) {
+        var d = parseTs(ts);
+        if (!d) return ts || "";
+        var ago = Math.round((Date.now() - d.getTime()) / 1000);
+        if (ago < 0) ago = 0;
+        if (ago < 60)   return ago + "s ago";
+        if (ago < 3600) return Math.round(ago / 60) + "m ago";
+        return d.toLocaleTimeString();
+    }
+
+    // Tests timed with whole-second granularity cannot honestly be reported
+    // to one decimal place — "0.0 ms" for an SSH session reads as a precise
+    // measurement of something that was never measured that finely.
+    function formatLatency(type, ms) {
+        if (ms === null || ms === undefined) return "";
+        if (COARSE_TIMING[type]) {
+            if (ms < 1000) return "Time: <span class='latency-val'>&lt;1s</span>";
+            return "Time: <span class='latency-val'>" + Math.round(ms / 1000) + "s</span>";
+        }
+        return "Latency: <span class='latency-val'>" + ms.toFixed(1) + " ms</span>";
+    }
+
+    // ---------------------------------------------------------------
+    // Add / remove static targets
+    //
+    // Uses prompt() rather than a modal: three fields, used rarely, and a
+    // built-in dialog cannot get out of sync with the API.
+    // ---------------------------------------------------------------
+    document.getElementById("btn-add-target").addEventListener("click", function() {
+        var name = prompt("Target name (e.g. R1-Lo0):");
+        if (!name) return;
+        var ip = prompt("IP address for " + name + ":");
+        if (!ip) return;
+        var tests = prompt(
+            "Tests to run against " + name + ", comma separated.\n" +
+            "Valid: http, ssh, traceroute, pmtu, dns, iperf3\n\n" +
+            "A router loopback typically answers traceroute and pmtu but has no HTTP server.",
+            "traceroute,pmtu");
+        if (!tests) return;
+
+        fetch("/targets", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                name: name.trim(),
+                ip: ip.trim(),
+                tests: tests.split(",").map(function(s) { return s.trim(); }).filter(Boolean)
+            })
+        }).then(function(r) {
+            return r.json().then(function(body) {
+                if (!r.ok) {
+                    alert("Could not add target: " + (body.error || r.status) +
+                          (body.unknown ? "\nUnknown test types: " + body.unknown.join(", ") : ""));
+                }
+                refresh();
+            });
+        });
+    });
+
+    // Delegated so it survives re-renders.
+    document.getElementById("targets-section").addEventListener("click", function(e) {
+        var th = e.target.closest ? e.target.closest("th[data-target]") : null;
+        if (!th) return;
+        var name = th.getAttribute("data-target");
+        if (!confirm("Remove static target " + name + "?")) return;
+        fetch("/targets/" + encodeURIComponent(name), {method: "DELETE"})
+            .then(function() { refresh(); });
+    });
+
+    // ---------------------------------------------------------------
+    // Init
+    // ---------------------------------------------------------------
+    refresh();
+    setInterval(refresh, 30000);
+    loadClock();
+    setInterval(loadClock, 60000);
+})();
+</script>
+</body>
+</html>

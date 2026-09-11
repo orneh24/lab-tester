@@ -1,0 +1,32 @@
+"""Configuration for the lab-tester hub."""
+
+import os
+
+DB_PATH = os.environ.get("HUB_DB_PATH", "hub.db")
+TEST_INTERVAL = int(os.environ.get("HUB_TEST_INTERVAL", "60"))
+RESULT_RETENTION_HOURS = int(os.environ.get("HUB_RESULT_RETENTION_HOURS", "24"))
+# Endpoints that have not re-registered within this many hours are dropped.
+# Test VMs re-register every 5 minutes, so this is generously long.
+STALE_ENDPOINT_HOURS = int(os.environ.get("HUB_STALE_ENDPOINT_HOURS", "6"))
+PORT = int(os.environ.get("HUB_PORT", "80"))
+DEBUG = os.environ.get("HUB_DEBUG", "false").lower() in ("true", "1", "yes")
+
+# ---------------------------------------------------------------------------
+# Syslog receiver
+# ---------------------------------------------------------------------------
+SYSLOG_ENABLED = os.environ.get("HUB_SYSLOG_ENABLED", "true").lower() in ("true", "1", "yes")
+SYSLOG_BIND = os.environ.get("HUB_SYSLOG_BIND", "0.0.0.0")
+# 514 is privileged, so the hub must start as root to bind it. Overridable
+# mainly so a non-root test run can use something above 1024.
+SYSLOG_PORT = int(os.environ.get("HUB_SYSLOG_PORT", "514"))
+# Row cap, not a time window: a debug-level router can outpace any retention
+# period, and the cap is what actually bounds the file. Enforced every 500
+# inserts by syslog_server, by id range — see the note there.
+SYSLOG_MAX_ROWS = int(os.environ.get("HUB_SYSLOG_MAX_ROWS", "300000"))
+
+# The syslog listener is a *second writer* against the same SQLite file as the
+# results API. Without a busy timeout on both, a message burst makes a
+# concurrent result POST fail outright with "database is locked" — the mesh
+# losing data exactly when the lab is noisy enough to be interesting. WAL
+# allows one writer at a time; this makes the loser wait instead of erroring.
+BUSY_TIMEOUT_MS = int(os.environ.get("HUB_BUSY_TIMEOUT_MS", "5000"))

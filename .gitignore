@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# SQLite (hub.db and its WAL/SHM siblings) — runtime data, never checked in
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local env overrides (see docs/HANDOFF.md "Running the hub locally")
+hub.env
+
+# Generated at build time by hub/build-template.sh — not source
+hub/agent/
+
+# Local drift-checker marker (see .claude/settings.json Stop hook)
+.claude/.drift-checked
+
+# Ad-hoc session screenshots, not project deliverables
+Claude outputs/

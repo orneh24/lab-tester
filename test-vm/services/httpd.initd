@@ -1,0 +1,34 @@
+#!/sbin/openrc-run
+# OpenRC init script for the busybox httpd serving the identity page.
+#
+# Without this the web server had to be started by hand and did not come
+# back after a reboot, which silently broke every HTTP test in the mesh.
+
+name="lab-httpd"
+description="lab-tester identity web server (busybox httpd)"
+
+command="/usr/sbin/httpd"
+command_args="-f -p 80 -h /var/www/localhost/htdocs -c /etc/httpd.conf"
+command_background="yes"
+pidfile="/run/lab-httpd.pid"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    # busybox installs httpd in /usr/sbin on some releases and /bin on others.
+    if [ ! -x "$command" ]; then
+        if [ -x /bin/httpd ]; then
+            command="/bin/httpd"
+        elif [ -x /usr/bin/httpd ]; then
+            command="/usr/bin/httpd"
+        else
+            eerror "httpd binary not found (is busybox-extras installed?)"
+            return 1
+        fi
+    fi
+
+    checkpath --directory --mode 0755 /var/www/localhost/htdocs
+}

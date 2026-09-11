@@ -1,0 +1,96 @@
+# lab-tester test VM configuration
+# Copy this file to /etc/lab-tester/config and edit as needed.
+#
+# In normal use you do not edit this by hand: setup.sh writes the file from
+# VMware guestinfo keys set on the VM in vCenter. Precedence for each value
+# is guestinfo -> environment variable -> interactive prompt.
+#
+#   guestinfo.lab.hub_url    ->  HUB_URL
+#   guestinfo.lab.router     ->  ROUTER_NAME
+#   guestinfo.lab.subnet     ->  SUBNET
+#   guestinfo.lab.hostname   ->  LAB_HOSTNAME   (optional)
+#   guestinfo.lab.dns_server ->  DNS_SERVER     (optional)
+#   guestinfo.lab.dns_query  ->  DNS_QUERY      (optional)
+
+# URL of the hub VM (no trailing slash)
+# Example: http://10.0.0.100
+HUB_URL=http://10.0.0.100
+
+# Name of the router this test VM sits behind
+# Example: R1, R2, R3
+ROUTER_NAME=R1
+
+# Subnet of this VM's inside interface (CIDR notation)
+# Example: 10.1.1.0/24
+SUBNET=10.1.1.0/24
+
+# ---------------------------------------------------------------------
+# Identity
+# ---------------------------------------------------------------------
+
+# Explicit hostname for this VM. Leave empty to derive it as
+# <HOSTNAME_PREFIX>-<router>, e.g. test-r1.
+#
+# It must be unique across the lab: the hub keys its endpoint table by
+# hostname, so two VMs sharing a name overwrite each other and the mesh
+# collapses to a single entry.
+LAB_HOSTNAME=
+
+HOSTNAME_PREFIX=test
+
+# ---------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------
+
+# Informational only — nothing reads this. setup.sh writes the literal 60 here
+# and the installed crontab entry is `* * * * *` regardless, so changing this
+# value does not change the cycle interval. Left in place because the interval
+# is worth stating somewhere; wire it into the crontab install step if you ever
+# need it to be real.
+TEST_INTERVAL=60
+
+# How often to run traceroute, in seconds. It is far more expensive than the
+# other tests and is diagnostic rather than continuous, so it runs on this
+# slower schedule — and additionally whenever an HTTP or SSH test to a target
+# has just failed, which is when the path detail is actually wanted.
+TRACEROUTE_INTERVAL=300
+
+# Maximum traceroute hops. Keep this tight: every unanswered hop costs
+# roughly the probe timeout, so a large value makes a black-holed path
+# expensive to measure.
+TRACEROUTE_MAX_HOPS=10
+
+# Payload size for the path-MTU probe, in bytes. 1472 payload + 28 bytes of
+# IP/ICMP header = 1500, the standard Ethernet MTU. Lower this if your lab
+# runs a smaller baseline MTU.
+#
+# This is the test that catches a tunnel where the peering is up and small
+# packets pass but large transfers hang — every other test here uses small
+# payloads and reads green straight through that fault.
+PMTU_SIZE=1472
+
+# Enable iperf3 bandwidth tests (true/false).
+# Note that iperf3 saturates the link for the duration of each test, which
+# will inflate the latency figures other VMs record at the same moment.
+ENABLE_IPERF=false
+
+# DNS resolver to query, e.g. 10.0.0.53. Leave empty to skip the DNS test
+# entirely — labs without DNS in the topology then see no red cells for it.
+DNS_SERVER=
+
+# Name to resolve when DNS_SERVER is set.
+DNS_QUERY=example.com
+
+# ---------------------------------------------------------------------
+# Maintenance
+# ---------------------------------------------------------------------
+
+# Pull agent script updates from the hub on each registration run (every 5
+# minutes), so scripts are edited in one place rather than on every VM.
+#
+# An update is only accepted if it matches the hub's published sha256, parses
+# as valid shell, and (for test-cycle.sh) runs successfully. The previous
+# version is kept as .known-good and restored if that run fails.
+#
+# Set to false to pin this VM to whatever it currently has.
+AGENT_AUTOUPDATE=true

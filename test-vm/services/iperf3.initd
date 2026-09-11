@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+# OpenRC init script for iperf3 server
+
+name="iperf3"
+description="iperf3 network performance measurement server"
+command="/usr/bin/iperf3"
+command_args="-s -D"
+pidfile="/run/iperf3.pid"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    # iperf3 -D writes its own pidfile only with --pidfile
+    command_args="-s -D --pidfile ${pidfile}"
+}
+
+stop() {
+    if [ -f "${pidfile}" ]; then
+        kill "$(cat "${pidfile}")" 2>/dev/null
+        rm -f "${pidfile}"
+    else
+        # Fallback: kill by process name
+        killall iperf3 2>/dev/null
+    fi
+}

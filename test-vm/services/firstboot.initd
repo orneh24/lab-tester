@@ -1,0 +1,74 @@
+#!/sbin/openrc-run
+# OpenRC service: run setup.sh automatically on first boot.
+#
+# Makes a clone genuinely zero-touch — set the guestinfo keys in vCenter,
+# power on, and the VM configures and registers itself with no console
+# session at all.
+#
+# It only auto-runs when guestinfo actually carries the required keys. With
+# no keys present, setup.sh would block on its interactive prompts with
+# nobody attached, so the service stands down and leaves the MOTD
+# instructions for a human instead.
+
+name="lab-tester-firstboot"
+description="Configure lab-tester on first boot from VMware guestinfo"
+
+depend() {
+    need net
+    after open-vm-tools chronyd
+}
+
+command_background="no"
+
+STAMP="/etc/lab-tester/.firstboot-done"
+SETUP="/usr/local/bin/lab-tester/setup.sh"
+
+_guestinfo() {
+    if command -v vmware-rpctool >/dev/null 2>&1; then
+        vmware-rpctool "info-get guestinfo.$1" 2>/dev/null | tr -d '\r\n'
+    elif command -v vmtoolsd >/dev/null 2>&1; then
+        vmtoolsd --cmd "info-get guestinfo.$1" 2>/dev/null | tr -d '\r\n'
+    fi
+}
+
+start() {
+    if [ -f "$STAMP" ]; then
+        einfo "lab-tester already configured; nothing to do"
+        return 0
+    fi
+
+    if [ ! -x "$SETUP" ]; then
+        eerror "setup.sh not found at $SETUP"
+        return 0
+    fi
+
+    _hub=$(_guestinfo "lab.hub_url")
+    _router=$(_guestinfo "lab.router")
+
+    case "$_hub" in *"No value found"*) _hub="" ;; esac
+    case "$_router" in *"No value found"*) _router="" ;; esac
+
+    if [ -z "$_hub" ] || [ -z "$_router" ]; then
+        ewarn "guestinfo.lab.hub_url / guestinfo.lab.router not set"
+        ewarn "skipping auto-setup — run $SETUP by hand to configure"
+        return 0
+    fi
+
+    ebegin "Configuring lab-tester from guestinfo"
+
+    # stdin from /dev/null so any unexpected prompt fails fast rather than
+    # hanging the boot waiting for input that will never come.
+    if "$SETUP" < /dev/null >> /var/log/lab-tester/firstboot.log 2>&1; then
+        mkdir -p /etc/lab-tester
+        date -u '+%Y-%m-%dT%H:%M:%SZ' > "$STAMP"
+        eend 0
+    else
+        eend 1 "setup failed — see /var/log/lab-tester/firstboot.log"
+    fi
+
+    return 0
+}
+
+stop() {
+    return 0
+}
