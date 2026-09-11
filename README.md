@@ -1,5 +1,7 @@
 # Lab Tester
 
+> **AI disclaimer:** This project was created using [Claude Code](https://claude.com/claude-code).
+
 Network end-to-end connectivity testing for the "inside" interfaces of
 virtualized Cisco CSR1000v routers in an R&S lab. Goes beyond ICMP — validates
 real TCP connections (HTTP, SSH, iperf3), path MTU, DNS resolution and
