@@ -23,6 +23,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HUB_INSTALL_DIR="/opt/lab-tester-hub"
 DB_DIR="/var/lib/lab-tester"
+LAB_ROOT_PASSWORD="${LAB_ROOT_PASSWORD:-lab123}"
 
 # -------------------------------------------------------------------
 # Helpers
@@ -83,10 +84,10 @@ rc-update add chronyd default
 # -------------------------------------------------------------------
 # 2b. Set default lab credentials
 # -------------------------------------------------------------------
-log "Setting default root password"
-echo "root:lab123" | chpasswd
+log "Setting root password"
+echo "root:${LAB_ROOT_PASSWORD}" | chpasswd
 
-log "Default credentials: root / lab123"
+log "Credentials: root / ${LAB_ROOT_PASSWORD}"
 
 # -------------------------------------------------------------------
 # 3. Create directories
@@ -115,7 +116,9 @@ fi
 cp -f "${SCRIPT_DIR}/requirements.txt" "$HUB_INSTALL_DIR/"
 cp -f "${SCRIPT_DIR}/serve.py" "$HUB_INSTALL_DIR/"
 cp -f "${SCRIPT_DIR}/run.sh" "$HUB_INSTALL_DIR/"
-chmod +x "$HUB_INSTALL_DIR/run.sh" "$HUB_INSTALL_DIR/serve.py"
+cp -f "${SCRIPT_DIR}/scripts/hub-setup.sh" "$HUB_INSTALL_DIR/"
+chmod +x "$HUB_INSTALL_DIR/run.sh" "$HUB_INSTALL_DIR/serve.py" "$HUB_INSTALL_DIR/hub-setup.sh"
+ln -sf "$HUB_INSTALL_DIR/hub-setup.sh" /usr/local/bin/hub-setup.sh
 
 # -------------------------------------------------------------------
 # Agent scripts served to the test VMs.
@@ -207,6 +210,15 @@ HUB_SYSLOG_MAX_ROWS=300000
 # this, a message burst makes a concurrent result push fail with "database is
 # locked" instead of waiting its turn.
 HUB_BUSY_TIMEOUT_MS=5000
+
+# --- Hub self-health (/api/health) ------------------------------------
+# OpenRC services to report on, comma-separated. Queried with
+# `rc-service <name> status`; a missing binary, timeout, or non-zero exit
+# degrades to a per-service "unknown" rather than failing the endpoint.
+HUB_HEALTH_SERVICES=lab-tester-hub,chronyd,dropbear,open-vm-tools
+
+# Timeout for each rc-service check, in seconds.
+HUB_HEALTH_SERVICE_TIMEOUT_S=3
 ENVEOF
 
 # -------------------------------------------------------------------
@@ -249,11 +261,22 @@ start_pre() {
 
 depend() {
     need net
-    after firewall
+    after firewall lab-tester-hub-firstboot
 }
 INITEOF
 
 chmod +x /etc/init.d/lab-tester-hub
+
+# First-boot autoconfiguration from guestinfo -- mirrors the test-vm image's
+# lab-tester-firstboot. Stands down when guestinfo.hub.ip/gateway are absent
+# rather than blocking on a prompt nobody is there to answer; the interactive
+# path is login-setup.sh below instead.
+cp -f "${SCRIPT_DIR}/services/firstboot.initd" /etc/init.d/lab-tester-hub-firstboot
+chmod +x /etc/init.d/lab-tester-hub-firstboot
+
+# Invite an unconfigured hub to run hub-setup.sh at first interactive login,
+# where a real tty is guaranteed (unlike an OpenRC start()).
+cp -f "${SCRIPT_DIR}/services/login-setup.sh" /etc/profile.d/lab-tester-hub-setup.sh
 
 # -------------------------------------------------------------------
 # 8. Enable services
@@ -262,6 +285,9 @@ log "Enabling services"
 
 # Hub service starts on boot
 rc-update add lab-tester-hub default
+
+# First-boot autoconfiguration from guestinfo
+rc-update add lab-tester-hub-firstboot default
 
 # SSH access for management
 apk add --no-cache dropbear
@@ -275,7 +301,7 @@ log "Services enabled"
 log "Creating first-boot instructions"
 cat > /etc/motd <<'MOTDEOF'
 
-  ┌──────────────────────────────────────────────┐
+  ┌───────────────────────────────────────────────┐
   │         lab-tester hub VM                     │
   │                                               │
   │  Dashboard: http://<this-vm-ip>/              │
@@ -283,10 +309,15 @@ cat > /etc/motd <<'MOTDEOF'
   │  DB:        /var/lib/lab-tester/hub.db        │
   │  Logs:      rc-service lab-tester-hub status  │
   │                                               │
-  │  If IP needs changing:                        │
-  │    vi /etc/network/interfaces                 │
+  │  Not configured yet? Log in and run:          │
+  │    hub-setup.sh                               │
+  │  (runs automatically at first login if the    │
+  │   static IP hasn't been set)                  │
+  │                                               │
+  │  If IP needs changing later:                  │
+  │    set-static-ip <ip/cidr> <gateway>          │
   │    rc-service networking restart              │
-  └──────────────────────────────────────────────┘
+  └───────────────────────────────────────────────┘
 
 MOTDEOF
 
@@ -354,6 +385,10 @@ rm -rf /var/cache/apk/*
 # Remove the DB if it was created during testing
 rm -f "$DB_DIR/hub.db"
 
+# Remove any setup stamp left from build-time testing, or the template would
+# consider itself already configured and skip hub-setup.sh on every clone.
+rm -f /etc/lab-tester-hub/.setup-done
+
 # Remove this build script (not needed on clones)
 rm -f "${SCRIPT_DIR}/build-template.sh"
 
@@ -370,9 +405,15 @@ log "Next steps:"
 log "  1. Shutdown:   poweroff"
 log "  2. In vCenter: right-click VM → Template → Convert to Template"
 log ""
-log "To deploy a clone:"
+log "To deploy a clone (guestinfo, zero-touch):"
 log "  1. Clone from template"
-log "  2. Boot and set static IP:"
-log "     set-static-ip 10.0.0.100/24 10.0.0.1"
-log "     rc-service networking restart"
+log "  2. Set these guestinfo keys on the clone in vCenter, then boot:"
+log "     guestinfo.hub.ip       10.0.0.100/24"
+log "     guestinfo.hub.gateway  10.0.0.1"
+log "  3. The dashboard starts automatically on port 80"
+log ""
+log "To deploy a clone (manual):"
+log "  1. Clone from template, boot, log in (root / ${LAB_ROOT_PASSWORD})"
+log "  2. hub-setup.sh runs automatically at login and prompts for the"
+log "     static IP -- or run it by hand any time"
 log "  3. The dashboard starts automatically on port 80"

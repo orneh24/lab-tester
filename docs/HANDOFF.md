@@ -1,6 +1,6 @@
 # Lab-Tester — Session Handoff
 
-Last updated: 2026-09-11. Written so a fresh session on any surface (Claude Code
+Last updated: 2026-09-12. Written so a fresh session on any surface (Claude Code
 in the terminal, the desktop app, claude.ai) can pick up without the prior chat.
 Architecture lives in `CLAUDE.md`, build order and the deployment checklist in
 `docs/DEPLOYMENT.md`, step detail in `docs/BUILD_GUIDE.md`. This file is state
@@ -43,6 +43,38 @@ and intent only.
 > sound.
 
 ## Recent changes
+
+**Router config templates, hub self-health, and hub zero-touch setup (2026-09-12).**
+
+Five additions, all additive — no changes to the wire contract or existing
+routes/tables, regression suite CLEAR (22/22 constraints, Tier 2/3, R21/R22):
+
+1. **CSR1000v config templates** — `docs/csr-baseline.cfg` (identical across
+   every router) and `docs/csr-example-r1.cfg` (per-router worked example).
+   Routing is eBGP, one AS per router, full mesh over a shared outside
+   segment, no IGP underneath. Management interface in a VRF (`MGMT`), with
+   syslog/NTP/SNMP all explicitly `vrf MGMT` — the actual config realizing
+   the "management separation" design described below. Includes NAT
+   overload for internet access and an SNMP read-only community restricted
+   by ACL to the hub's mgmt IP. Every value is a `<PLACEHOLDER>` token, not
+   a real address. Diagram: `docs/TOPOLOGY.md` (Mermaid + a rendered PNG,
+   `docs/img/topology.png`).
+2. **`GET /api/health`** (`hub/app/app.py`) and a "Hub Health" dashboard
+   panel — OpenRC service status, syslog listener state, load average,
+   memory, disk, uptime. Same never-500 discipline as `/api/time`: every
+   check is independently fault-tolerant.
+3. **Hub zero-touch setup** — `guestinfo.hub.ip` / `guestinfo.hub.gateway`,
+   read by a new `lab-tester-hub-firstboot` OpenRC service
+   (`hub/services/firstboot.initd`), mirroring the test-VM's existing
+   `lab-tester-firstboot`. With neither key present, it stands down (no
+   reliable tty inside an OpenRC `start()` to prompt from) and
+   `hub-setup.sh` prompts interactively at first login instead
+   (`hub/services/login-setup.sh` invites it via `/etc/profile.d`).
+4. **`LAB_ROOT_PASSWORD`** — both `build-template.sh` scripts now read this
+   env var (default `lab123`) instead of hardcoding the root password.
+5. Doc pass: `DEPLOYMENT.md` stages 1/3/6 now point at the config templates
+   and the zero-touch/interactive setup options; `README.md` and `CLAUDE.md`
+   updated to match.
 
 **Hub NTP-sync indicator added to the main dashboard (2026-09-11).**
 `GET /api/time` (added 2026-09-10) was rendered on `/syslog` only. The same
@@ -189,14 +221,18 @@ but **nothing here works today**:
   `guestinfo.lab.hostname` or derives it from the router slug. Deriving it from
   IP or MAC at first boot would remove the last manual step and the
   duplicate-hostname failure mode (constraint 1).
-- **Management separation: designed and supported, not yet deployed.** The
-  design: router management interfaces in a VRF (`MGMT` or the built-in
-  `Mgmt-intf`), hub dual-homed with NIC1 on the test-VM segment and NIC2 on the
-  management VLAN, test VMs never on that VLAN, `ip_forward=0` on the hub (see
-  above — not yet pinned). The risk it addresses is not the hub reporting path;
-  it is that a shared management VLAN gives the *routers* a path to each other
-  outside the tested topology, so leaked routing would turn the matrix green
-  while measuring nothing.
+- **Management separation: designed, now specified in config, not yet
+  deployed to real hardware.** The design: router management interfaces in a
+  VRF (`MGMT`), hub dual-homed with NIC1 on the test-VM segment and NIC2 on
+  the management VLAN, test VMs never on that VLAN, `ip_forward=0` on the hub
+  (see above — not yet pinned). `docs/csr-baseline.cfg` /
+  `docs/csr-example-r1.cfg` (2026-09-12) now write this out concretely — VRF
+  definition, `vrf forwarding` on the mgmt interface, `vrf MGMT` on every
+  logging/ntp/snmp line — but nothing here has run against a real CSR1000v
+  yet. The risk it addresses is not the hub reporting path; it is that a
+  shared management VLAN gives the *routers* a path to each other outside the
+  tested topology, so leaked routing would turn the matrix green while
+  measuring nothing.
 - **No vCenter tooling, deliberately.** Deployment is clone → correct port
   group → power on. `govc` + a `lab.yaml` manifest is the option if the
   topology starts churning; Packer if the golden image gets rebuilt often. A

@@ -30,3 +30,17 @@ SYSLOG_MAX_ROWS = int(os.environ.get("HUB_SYSLOG_MAX_ROWS", "300000"))
 # losing data exactly when the lab is noisy enough to be interesting. WAL
 # allows one writer at a time; this makes the loser wait instead of erroring.
 BUSY_TIMEOUT_MS = int(os.environ.get("HUB_BUSY_TIMEOUT_MS", "5000"))
+
+# ---------------------------------------------------------------------------
+# Hub self-health (/api/health)
+# ---------------------------------------------------------------------------
+# OpenRC services to report on, comma-separated. Queried with
+# `rc-service <name> status`, same subprocess pattern as /api/time's chronyc
+# call — missing binary, timeout, or non-zero exit all degrade to a per-service
+# "unknown" rather than failing the whole endpoint.
+HEALTH_SERVICES = [
+    s.strip() for s in os.environ.get(
+        "HUB_HEALTH_SERVICES", "lab-tester-hub,chronyd,dropbear,open-vm-tools"
+    ).split(",") if s.strip()
+]
+HEALTH_SERVICE_TIMEOUT_S = int(os.environ.get("HUB_HEALTH_SERVICE_TIMEOUT_S", "3"))

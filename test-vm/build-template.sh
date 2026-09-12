@@ -21,6 +21,7 @@ INSTALL_DIR="/usr/local/bin/lab-tester"
 CONFIG_DIR="/etc/lab-tester"
 LOG_DIR="/var/log/lab-tester"
 WEB_ROOT="/var/www/localhost/htdocs"
+LAB_ROOT_PASSWORD="${LAB_ROOT_PASSWORD:-lab123}"
 
 # -------------------------------------------------------------------
 # Helpers
@@ -111,12 +112,12 @@ rc-update add chronyd default
 # -------------------------------------------------------------------
 # 2b. Set default lab credentials
 # -------------------------------------------------------------------
-log "Setting default root password"
-echo "root:lab123" | chpasswd
+log "Setting root password"
+echo "root:${LAB_ROOT_PASSWORD}" | chpasswd
 
 # Dropbear permits root password login by default (no -w in DROPBEAR_OPTS).
 
-log "Default credentials: root / lab123"
+log "Credentials: root / ${LAB_ROOT_PASSWORD}"
 
 # -------------------------------------------------------------------
 # 2c. Shared SSH keypair for the mesh
@@ -320,5 +321,5 @@ log "  Then run: /usr/local/bin/lab-tester/setup.sh"
 log ""
 log "To deploy a clone (manual):"
 log "  1. Clone from template, assign to correct port group"
-log "  2. Boot and log in (root / lab123)"
+log "  2. Boot and log in (root / ${LAB_ROOT_PASSWORD})"
 log "  3. Run: /usr/local/bin/lab-tester/setup.sh  (it will prompt)"

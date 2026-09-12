@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from flask import Flask, request, jsonify, render_template, g, Response
 
 from . import config
+from . import syslog_server
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "..", "templates"),
             static_folder=os.path.join(os.path.dirname(__file__), "..", "static"))
@@ -669,6 +670,152 @@ def api_time():
 
     out["chrony"] = tracking
     return jsonify(out)
+
+
+# ---------------------------------------------------------------------------
+# Hub self-health
+#
+# The hub is infrastructure, not a test participant, but it can still fail
+# quietly: a full disk stops both the sweep and the syslog cap from helping,
+# and a dead service (chronyd, dropbear, the syslog listener) degrades
+# correlation or access without ever showing up in the matrix. This is a
+# separate concern from /api/time, which is specifically about clock
+# discipline for syslog pinning; this endpoint is the general "is the box
+# itself OK" check.
+#
+# Same failure-tolerance rule as /api/time: never 500. Each metric and each
+# service check is independently guarded, so one missing binary or unreadable
+# /proc file degrades that one field to null/"unknown" rather than blanking
+# the whole response — this is meant to be useful on a flaky VM, not just a
+# healthy one, and it is routinely run on non-Alpine dev boxes where
+# rc-service does not exist at all.
+# ---------------------------------------------------------------------------
+
+def _service_status(name):
+    """Query one OpenRC service via `rc-service <name> status`.
+
+    Returns {"status": "up"|"down"|None, "detail": str}. None status means the
+    check itself could not be performed (no rc-service binary, timeout,
+    unexpected error) — that is different from a service that responded and
+    is stopped, so the two are not folded together.
+    """
+    if shutil.which("rc-service") is None:
+        return {"status": None, "detail": "rc-service not installed"}
+    try:
+        proc = subprocess.run(
+            ["rc-service", name, "status"],
+            capture_output=True, text=True, timeout=config.HEALTH_SERVICE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": None, "detail": "rc-service timed out"}
+    except OSError as exc:
+        return {"status": None, "detail": "rc-service failed: {}".format(exc.__class__.__name__)}
+
+    out = (proc.stdout or proc.stderr or "").strip()
+    # OpenRC's `status` exits 0 for started, non-zero for stopped/crashed —
+    # same shape as chronyc's returncode check in api_time.
+    if proc.returncode == 0:
+        return {"status": "up", "detail": out[:120] or "started"}
+    return {"status": "down", "detail": out[:120] or "not running"}
+
+
+def _load_avg():
+    try:
+        one, five, fifteen = os.getloadavg()
+        return {"1m": one, "5m": five, "15m": fifteen}
+    except (OSError, AttributeError):
+        # AttributeError: not available on Windows, which is where this is
+        # routinely exercised in development.
+        return None
+
+
+def _memory_info():
+    """Parse /proc/meminfo rather than shelling out to `free`.
+
+    MemAvailable (not MemFree) is what accounts for reclaimable cache, so it
+    is the number that matches what an operator means by "how much is free".
+    """
+    try:
+        fields = {}
+        with open("/proc/meminfo", "r") as fh:
+            for line in fh:
+                key, _, rest = line.partition(":")
+                rest = rest.strip()
+                if rest.endswith("kB"):
+                    rest = rest[:-2].strip()
+                try:
+                    fields[key] = int(rest)
+                except ValueError:
+                    pass
+        total = fields.get("MemTotal")
+        available = fields.get("MemAvailable")
+        if total is None or available is None:
+            return None
+        used = total - available
+        pct = round(used / total * 100, 1) if total else None
+        return {
+            "total_kb": total,
+            "available_kb": available,
+            "used_kb": used,
+            "used_pct": pct,
+        }
+    except OSError:
+        return None
+
+
+def _disk_info():
+    """Usage of the filesystem holding the SQLite DB.
+
+    The DB and the syslog table both grow (retention sweep and row cap are
+    both about bounding this), so this is the filesystem an operator actually
+    cares about, not the root filesystem in general.
+    """
+    try:
+        directory = os.path.dirname(os.path.abspath(config.DB_PATH)) or "."
+        usage = shutil.disk_usage(directory)
+        pct = round(usage.used / usage.total * 100, 1) if usage.total else None
+        return {
+            "path": directory,
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "free_bytes": usage.free,
+            "used_pct": pct,
+        }
+    except OSError:
+        return None
+
+
+def _uptime_s():
+    try:
+        with open("/proc/uptime", "r") as fh:
+            return float(fh.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    """Hub self-health: services, load, memory, disk, uptime.
+
+    Always 200, matching /api/time — a health check that itself 500s on a
+    flaky VM would defeat the point. Every field degrades independently.
+    """
+    services = {}
+    for name in config.HEALTH_SERVICES:
+        try:
+            services[name] = _service_status(name)
+        except Exception as exc:  # belt and braces: one bad service must not blank the rest
+            services[name] = {"status": None, "detail": "check failed: {}".format(exc.__class__.__name__)}
+
+    return jsonify({
+        "checked_at": iso(sqlite_now()),
+        "services": services,
+        "syslog_listening": syslog_server.is_listening(),
+        "load_avg": _load_avg(),
+        "memory": _memory_info(),
+        "disk": _disk_info(),
+        "uptime_s": _uptime_s(),
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,66 @@
+#!/sbin/openrc-run
+# OpenRC service: auto-configure the hub's static IP from guestinfo on
+# first boot.
+#
+# Mirrors test-vm's lab-tester-firstboot: only acts when guestinfo actually
+# carries both required keys. With neither present, this stands down rather
+# than prompting -- an OpenRC start() has no reliable attached tty to read
+# from, so it must never be the thing that blocks the boot. The interactive
+# path lives in hub-setup.sh instead, invited at first login by
+# login-setup.sh, where a real tty is guaranteed.
+
+name="lab-tester-hub-firstboot"
+description="Configure hub static IP from VMware guestinfo on first boot"
+
+depend() {
+    need net
+    after open-vm-tools
+    before lab-tester-hub
+}
+
+command_background="no"
+
+CONF_DIR="/etc/lab-tester-hub"
+STAMP="${CONF_DIR}/.setup-done"
+
+_guestinfo() {
+    if command -v vmware-rpctool >/dev/null 2>&1; then
+        vmware-rpctool "info-get guestinfo.$1" 2>/dev/null | tr -d '\r\n'
+    elif command -v vmtoolsd >/dev/null 2>&1; then
+        vmtoolsd --cmd "info-get guestinfo.$1" 2>/dev/null | tr -d '\r\n'
+    fi
+}
+
+start() {
+    if [ -f "$STAMP" ]; then
+        einfo "hub already configured; nothing to do"
+        return 0
+    fi
+
+    _ip=$(_guestinfo "hub.ip")
+    _gw=$(_guestinfo "hub.gateway")
+
+    case "$_ip" in *"No value found"*) _ip="" ;; esac
+    case "$_gw" in *"No value found"*) _gw="" ;; esac
+
+    if [ -z "$_ip" ] || [ -z "$_gw" ]; then
+        ewarn "guestinfo.hub.ip / guestinfo.hub.gateway not set"
+        ewarn "skipping auto-setup -- log in and run: hub-setup.sh"
+        return 0
+    fi
+
+    ebegin "Configuring hub static IP from guestinfo"
+    mkdir -p "$CONF_DIR"
+    if set-static-ip "$_ip" "$_gw" && rc-service networking restart; then
+        date -u '+%Y-%m-%dT%H:%M:%SZ configured (guestinfo)' > "$STAMP"
+        eend 0
+    else
+        eend 1 "static IP configuration failed"
+    fi
+
+    return 0
+}
+
+stop() {
+    return 0
+}

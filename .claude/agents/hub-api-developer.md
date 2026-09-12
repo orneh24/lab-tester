@@ -28,6 +28,7 @@ You develop the lab-tester hub: `hub/app/app.py` (Flask), SQLite storage, and `h
 - `GET /api/syslog/sources` — distinct senders with counts, for the filter dropdown.
 - `GET /syslog` — the viewer page. A `from`/`to` pair pins it and disables auto-refresh.
 - `GET /api/time` — hub clock plus chrony tracking state. **Always 200**: every failure (no chronyc, daemon down, timeout, unparseable output) returns `chrony: null` with a `reason`, because the syslog header renders a failure as `clock: unavailable` and a 500 would blank it.
+- `GET /api/health` — hub self-health for the dashboard's "Hub Health" panel: OpenRC service status (`HUB_HEALTH_SERVICES`), syslog listener state, load average, memory, disk, uptime. Same never-500 discipline as `/api/time` — each check degrades independently rather than failing the endpoint.
 
 Test types: `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`.
 

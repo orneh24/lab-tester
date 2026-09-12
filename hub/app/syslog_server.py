@@ -228,6 +228,16 @@ _started = False
 _start_lock = threading.Lock()
 
 
+def is_listening():
+    """Whether the UDP listener actually bound. Used by /api/health.
+
+    Reads the same flag start() sets, rather than re-deriving the state (e.g.
+    by trying to bind again), so this can never disagree with what actually
+    happened at startup.
+    """
+    return _started
+
+
 def start():
     """Start the listener once. Safe to call repeatedly.
 

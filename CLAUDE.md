@@ -5,6 +5,8 @@ A lightweight system for testing end-to-end connectivity between hosts on the "i
 
 ## Architecture
 
+Diagram: `docs/TOPOLOGY.md`.
+
 ### Hub VM (standalone)
 - Alpine Linux VM, ~192 MB RAM
 - NOT a test participant — purely infrastructure
@@ -37,6 +39,12 @@ A lightweight system for testing end-to-end connectivity between hosts on the "i
   - `GET /api/time` — hub clock plus chrony tracking state, for the syslog
     header. Always 200: every failure (no chronyc, daemon down, timeout,
     unparseable output) returns `chrony: null` with a `reason`
+  - `GET /api/health` — hub self-health for the dashboard's "Hub Health"
+    panel: OpenRC service status (`HUB_HEALTH_SERVICES`, default
+    `lab-tester-hub,chronyd,dropbear,open-vm-tools`), syslog listener state,
+    load average, memory, disk, uptime. Same never-500 discipline as
+    `/api/time` — a check that can't run (e.g. `rc-service` missing) reports
+    `null`/a reason rather than failing the page
 
 ### Test types
 `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`. The dashboard labels
@@ -139,7 +147,8 @@ with `AGENT_AUTOUPDATE=false`.
 ## Infrastructure
 - ESXi 7.0 + vCenter, `open-vm-tools` on both roles
 - Two separate golden templates, each built by its own `build-template.sh`
-- Default credentials: **root / lab123** (isolated lab only)
+- Default credentials: **root / lab123** (isolated lab only) — override with
+  `LAB_ROOT_PASSWORD` when running either `build-template.sh`
 - `chrony` on all VMs — the hub's clock is the mesh reference
 
 ## Per-VM configuration: guestinfo
@@ -157,6 +166,20 @@ keys set on the VM are read in-guest via `vmware-rpctool "info-get <key>"`:
 
 Precedence in `setup.sh`: **guestinfo → environment → prompt**.
 If hostname is omitted it is derived as `<HOSTNAME_PREFIX>-<router-slug>`.
+
+The table above is read by the test VMs. The **hub** has its own, smaller
+set, read by `lab-tester-hub-firstboot` (`hub/services/firstboot.initd`) and
+set on the hub's own VM object, not the test VMs':
+
+| Key | Example |
+|-----|---------|
+| `guestinfo.hub.ip` | `10.0.0.100/24` |
+| `guestinfo.hub.gateway` | `10.0.0.1` |
+
+Both optional — with neither present, the firstboot service stands down
+(same reasoning as the test VMs: no reliable tty inside an OpenRC `start()`
+to prompt from) and `hub-setup.sh` prompts interactively at first login
+instead (`hub/scripts/hub-setup.sh`, invited by `hub/services/login-setup.sh`).
 
 ## Project Structure
 ```

@@ -395,6 +395,66 @@ a:hover { text-decoration: underline; }
 .detail-test-output.open { display: block; }
 .latency-val { color: var(--yellow); font-weight: 600; }
 
+/* Hub health */
+.health-svc-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+.svc-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+}
+.svc-badge .dot2 {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.svc-badge.up .dot2   { background: var(--green); }
+.svc-badge.down .dot2 { background: var(--red); }
+.svc-badge.unknown .dot2 { background: var(--gray); }
+.svc-badge.down  { color: var(--red); }
+.health-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+}
+.health-stat {
+    min-width: 140px;
+}
+.health-stat-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+}
+.health-stat-value {
+    font-size: 12px;
+}
+.health-bar-track {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    height: 6px;
+    width: 100%;
+    margin-top: 4px;
+    overflow: hidden;
+}
+.health-bar-fill {
+    height: 100%;
+    background: var(--green);
+}
+.health-bar-fill.warn { background: var(--yellow); }
+.health-bar-fill.bad  { background: var(--red); }
+
 /* Legend */
 .legend {
     display: flex;
@@ -491,6 +551,23 @@ a:hover { text-decoration: underline; }
                 <div class="empty-hint" id="dns-empty">
                     No DNS tests running. Set <code>DNS_SERVER</code> in a test VM's
                     config, or add a static target with the <code>dns</code> test.
+                </div>
+            </div>
+        </div>
+
+        <!-- Hub self-health: the hub is infrastructure, not a test participant,
+             but it can still fail quietly (full disk, dead chronyd, a syslog
+             listener that never bound). Separate from the mesh matrix above. -->
+        <div class="section" id="health-section">
+            <div class="section-header">
+                <span>Hub Health</span>
+                <span id="health-checked" style="font-size:10px;color:var(--text-dim);text-transform:none;letter-spacing:0"></span>
+            </div>
+            <div class="section-body">
+                <div class="health-svc-list" id="health-services"></div>
+                <div class="health-metrics" id="health-metrics"></div>
+                <div class="empty-hint" id="health-empty" style="display:none">
+                    Hub health is unavailable.
                 </div>
             </div>
         </div>
@@ -635,6 +712,95 @@ a:hover { text-decoration: underline; }
                 var el = document.getElementById("clock");
                 el.className = "clock bad";
                 el.textContent = "clock: NTP status unavailable";
+            });
+    }
+
+    // ---------------------------------------------------------------
+    // Hub health — the hub's own vitals (services, load, memory, disk),
+    // separate from the mesh "health summary" below which is about test
+    // results. Follows the same fetch/poll/catch/empty-state pattern as
+    // loadClock(): a failure here degrades to an empty-state panel, never
+    // a thrown error, since this is meant to keep working on a flaky VM.
+    // ---------------------------------------------------------------
+    function pctBarClass(pct) {
+        if (pct === null || pct === undefined) return "";
+        if (pct >= 90) return "bad";
+        if (pct >= 75) return "warn";
+        return "";
+    }
+
+    function fmtBytes(n) {
+        if (n === null || n === undefined) return "?";
+        var units = ["B", "KB", "MB", "GB", "TB"];
+        var i = 0;
+        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+        return n.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+    }
+
+    function loadHealth() {
+        fetch("/api/health")
+            .then(function(r) { return r.json(); })
+            .then(function(h) {
+                document.getElementById("health-empty").style.display = "none";
+                document.getElementById("health-services").style.display = "";
+                document.getElementById("health-metrics").style.display = "";
+
+                document.getElementById("health-checked").textContent =
+                    h.checked_at ? "checked " + formatWhen(h.checked_at) : "";
+
+                // Services
+                var svcHtml = "";
+                var services = h.services || {};
+                for (var name in services) {
+                    if (!services.hasOwnProperty(name)) continue;
+                    var s = services[name];
+                    var cls = s.status === "up" ? "up" : (s.status === "down" ? "down" : "unknown");
+                    var label = s.status === "up" ? "up" : (s.status === "down" ? "down" : "unknown");
+                    svcHtml += "<span class='svc-badge " + cls + "' title='" + esc(s.detail || "") + "'>" +
+                               "<span class='dot2'></span>" + esc(name) + ": " + label + "</span>";
+                }
+                var syslogCls = h.syslog_listening ? "up" : "down";
+                svcHtml += "<span class='svc-badge " + syslogCls + "' title='UDP/514 syslog receiver'>" +
+                           "<span class='dot2'></span>syslog listener: " +
+                           (h.syslog_listening ? "listening" : "not listening") + "</span>";
+                document.getElementById("health-services").innerHTML = svcHtml;
+
+                // Metrics
+                var m = "";
+                if (h.load_avg) {
+                    m += "<div class='health-stat'><div class='health-stat-label'>Load avg</div>" +
+                         "<div class='health-stat-value'>" +
+                         h.load_avg["1m"].toFixed(2) + " / " + h.load_avg["5m"].toFixed(2) +
+                         " / " + h.load_avg["15m"].toFixed(2) + "</div></div>";
+                }
+                if (h.memory) {
+                    var mp = h.memory.used_pct;
+                    m += "<div class='health-stat'><div class='health-stat-label'>Memory</div>" +
+                         "<div class='health-stat-value'>" + mp + "% used (" +
+                         fmtBytes(h.memory.used_kb * 1024) + " / " + fmtBytes(h.memory.total_kb * 1024) + ")</div>" +
+                         "<div class='health-bar-track'><div class='health-bar-fill " + pctBarClass(mp) +
+                         "' style='width:" + Math.min(mp, 100) + "%'></div></div></div>";
+                }
+                if (h.disk) {
+                    var dp = h.disk.used_pct;
+                    m += "<div class='health-stat'><div class='health-stat-label'>Disk (" + esc(h.disk.path) + ")</div>" +
+                         "<div class='health-stat-value'>" + dp + "% used (" +
+                         fmtBytes(h.disk.used_bytes) + " / " + fmtBytes(h.disk.total_bytes) + ")</div>" +
+                         "<div class='health-bar-track'><div class='health-bar-fill " + pctBarClass(dp) +
+                         "' style='width:" + Math.min(dp, 100) + "%'></div></div></div>";
+                }
+                if (h.uptime_s !== null && h.uptime_s !== undefined) {
+                    var days = Math.floor(h.uptime_s / 86400);
+                    var hrs = Math.floor((h.uptime_s % 86400) / 3600);
+                    m += "<div class='health-stat'><div class='health-stat-label'>Uptime</div>" +
+                         "<div class='health-stat-value'>" + days + "d " + hrs + "h</div></div>";
+                }
+                document.getElementById("health-metrics").innerHTML = m;
+            })
+            .catch(function() {
+                document.getElementById("health-services").style.display = "none";
+                document.getElementById("health-metrics").style.display = "none";
+                document.getElementById("health-empty").style.display = "";
             });
     }
 
@@ -1151,6 +1317,8 @@ a:hover { text-decoration: underline; }
     setInterval(refresh, 30000);
     loadClock();
     setInterval(loadClock, 60000);
+    loadHealth();
+    setInterval(loadHealth, 60000);
 })();
 </script>
 </body>

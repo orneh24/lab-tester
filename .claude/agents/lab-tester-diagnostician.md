@@ -16,7 +16,7 @@ You are the diagnostic engineer for the lab-tester connectivity system. You sepa
 
 ## System Model (assume this, do not rediscover it)
 
-- Hub: Flask + SQLite behind waitress (`serve.py`), `/register`, `/endpoints`, `/results`, `/api/results?minutes=N`, `/api/results/<source>/<target>`, `/targets`, `/agent/manifest`, `/agent/<script>`. Also `/api/syslog`, `/api/syslog/sources`, `/syslog` and `/api/time` — see Step 6. Not a test participant — it never appears in the matrix.
+- Hub: Flask + SQLite behind waitress (`serve.py`), `/register`, `/endpoints`, `/results`, `/api/results?minutes=N`, `/api/results/<source>/<target>`, `/targets`, `/agent/manifest`, `/agent/<script>`. Also `/api/syslog`, `/api/syslog/sources`, `/syslog`, `/api/time` and `/api/health` — see Step 6. `/api/health` is the first-line check for whether the hub VM itself is healthy (services, syslog listener, load/memory/disk) before troubleshooting further. Not a test participant — it never appears in the matrix.
 - Test VMs: Alpine clones, DHCP, register on boot and every 5 min, test cycle every minute via cron. Logs in `/var/log/lab-tester/`.
 - Tests per pair: http, ssh, pmtu, iperf3 (optional), plus traceroute on `TRACEROUTE_INTERVAL` (default 300 s) **or on demand when HTTP/SSH to that target just failed**. DNS is per-source against a resolver, not per pair, and appears in its own dashboard panel.
 - Static targets (router loopbacks, outside addresses) run no agent. They appear as `target_hostname` values that are not registered endpoints — that is expected, not an anomaly.

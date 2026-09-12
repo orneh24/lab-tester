@@ -29,6 +29,13 @@ Everything downstream bakes these in. Settle them before touching a VM.
 
 ## 1. Routers (CSR1000v)
 
+`docs/csr-baseline.cfg` (identical on every router) and
+`docs/csr-example-r1.cfg` (per-router worked example, R1) cover this stage —
+eBGP full mesh over Outside-shared, one AS per router, NAT overload for
+internet access, and the SNMP read-only community. See `docs/TOPOLOGY.md` for
+the diagram. Both files use `<PLACEHOLDER>` tokens throughout; nothing in them
+is a real address.
+
 - [ ] Deploy the routers; configure inside and outside interfaces
 - [ ] Routing between routers so inside subnets reach each other
 - [ ] DHCP pool on each inside interface
@@ -36,7 +43,8 @@ Everything downstream bakes these in. Settle them before touching a VM.
 - [ ] Management interface into a VRF on the management VLAN. There is no
       walkthrough for this in BUILD_GUIDE — it is router-side work
 
-Syslog and NTP configuration comes in stage 6, once the hub has an address.
+Syslog, NTP and SNMP configuration comes in stage 6, once the hub has an
+address.
 
 > Do the VRF now rather than later: `vrf forwarding` wipes the interface's IP
 > configuration, which is painless before anything depends on the router and
@@ -65,9 +73,15 @@ script and contradicts it (its init script runs `run.sh`; the real one runs
 `python3 serve.py`).
 
 - [ ] Copy `hub/` to the VM, run `hub/build-template.sh`
-- [ ] `set-static-ip <ip/cidr> <gateway>` — **one interface, no NIC argument.**
-      The helper writes the whole of `/etc/network/interfaces`
-- [ ] `rc-service networking restart`
+- [ ] Set the static IP, either way:
+      - **Guestinfo (zero-touch):** set `guestinfo.hub.ip` and
+        `guestinfo.hub.gateway` on the VM before boot; `lab-tester-hub-firstboot`
+        applies them automatically, no console session needed.
+      - **Manual:** log in — `hub-setup.sh` runs automatically at first login
+        and prompts for both values, or run `set-static-ip <ip/cidr> <gateway>`
+        yourself. **One interface, no NIC argument** — the helper writes the
+        whole of `/etc/network/interfaces`.
+- [ ] `rc-service networking restart` (skip if `hub-setup.sh` already did it)
 - [ ] `/opt/lab-tester-hub/hub.env` if the defaults do not suit. The file is
       written by `build-template.sh` and every key is commented in place with
       what it does; `hub/app/config.py` is where they are read
@@ -86,6 +100,11 @@ Verify before moving on:
       `[syslog] listening on <bind>:514`
 - [ ] `curl http://<hub-ip>/api/syslog?minutes=5` returns JSON (`[]` before any
       router is configured — an error means the listener did not start)
+- [ ] `curl http://<hub-ip>/api/health` returns 200. The dashboard's "Hub
+      Health" panel reads this — service/syslog-listener status, load,
+      memory, disk, uptime. Never 500s; a service check that can't run
+      (e.g. `rc-service` missing) reports `status: null` with a reason
+      rather than failing the page
 - [ ] `curl http://<hub-ip>/api/time` returns 200 with a `utc`, and the `/syslog`
       header indicator is not red. It reports `chronyc -n tracking`: red means
       `Leap status` is not `Normal`, amber means the hub is on its own
@@ -147,13 +166,16 @@ Repeat per router:
 
 ## 6. Point the routers at the hub
 
-Per router (VRF form shown; drop `vrf MGMT` if management is in the global table):
+This is `docs/csr-baseline.cfg`'s logging/NTP/SNMP block, applied per router
+(all three lines carry `vrf MGMT`; drop it only if management is deliberately
+in the global table):
 
 ```
 service timestamps log datetime msec localtime show-timezone
 logging host <hub-mgmt-ip> vrf MGMT
 logging trap informational
 ntp server vrf MGMT <upstream-ntp-ip>
+snmp-server community <snmp-ro-community> RO <acl restricted to hub-mgmt-ip>
 ```
 
 **The hub is not an NTP server** — point `ntp server` at real upstream time, not
@@ -163,6 +185,7 @@ at the hub. The hub disciplines its own clock only.
 - [ ] `show ntp status` on each router reports synchronised
 - [ ] Router and hub clocks agree — compare `show clock` against the hub's
       `/api/time`. The ±5 min correlation windows are only as good as this
+- [ ] SNMP polling works from the hub: `snmpget -v2c -c <community> <router-mgmt-ip> sysUpTime.0`
 
 > A `logging host` or `ntp server` line missing `vrf MGMT` fails silently: the
 > router looks the hub up in the global table, finds nothing, and reports no
