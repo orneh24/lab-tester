@@ -1,7 +1,7 @@
 # Lab Tester — Network End-to-End Connectivity Testing
 
 ## Project Overview
-A lightweight system for testing end-to-end connectivity between hosts on the "inside" interfaces of virtualized Cisco CSR1000v routers in a R&S lab. Goes beyond ICMP — validates real TCP connections (HTTP, SSH, iperf3) and visualizes results on a web dashboard.
+A lightweight system for testing end-to-end connectivity between hosts on the "inside" interfaces of virtualized Cisco CSR1000v routers in a R&S lab. Goes beyond ICMP — validates real TCP connections (HTTP, SSH, SMB, iperf3), packet loss/jitter, path MTU, DNS resolution and traceroute, polls the routers' own SNMP counters, and visualizes results on a web dashboard.
 
 ## Architecture
 
@@ -19,6 +19,10 @@ Diagram: `docs/TOPOLOGY.md`.
   - SQLite database (WAL mode) at `/var/lib/lab-tester/hub.db`
   - Web dashboard on **port 80**
   - UDP syslog receiver on **port 514**, in a daemon thread (see Syslog below)
+  - SNMP poller, in a daemon thread, opt-in (see SNMP polling below)
+  - Config file download server (`lab-tester-serve`, busybox httpd) on
+    **port 8080**, its own OpenRC service, always on — see Config file
+    server below
 - Installed to `/opt/lab-tester-hub/`, started by OpenRC service `lab-tester-hub`
 - Entrypoint is `serve.py` — it reads `HUB_PORT` at runtime. Do not move the
   port into the init script's `command_args`: OpenRC expands that at parse
@@ -41,15 +45,36 @@ Diagram: `docs/TOPOLOGY.md`.
     unparseable output) returns `chrony: null` with a `reason`
   - `GET /api/health` — hub self-health for the dashboard's "Hub Health"
     panel: OpenRC service status (`HUB_HEALTH_SERVICES`, default
-    `lab-tester-hub,chronyd,dropbear,open-vm-tools`), syslog listener state,
+    `lab-tester-hub,chronyd,dropbear,open-vm-tools,lldpd`), syslog listener state,
     load average, memory, disk, uptime. Same never-500 discipline as
     `/api/time` — a check that can't run (e.g. `rc-service` missing) reports
     `null`/a reason rather than failing the page
+  - `GET|POST /snmp/targets`, `DELETE /snmp/targets/<name>` — routers to poll
+  - `GET /api/snmp?router=&minutes=`, `GET /api/snmp/sources` — polled
+    interface counters, for the "Router SNMP" dashboard panel
 
 ### Test types
-`http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`. The dashboard labels
-them H / S / T / M / D / I. `dns` only runs when `DNS_SERVER` is set;
-`iperf3` only when `ENABLE_IPERF=true`.
+`http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`, `smb`, `loss`. The
+dashboard labels them H / S / T / M / D / I / B / L. `dns` only runs when
+`DNS_SERVER` is set; `iperf3` only when `ENABLE_IPERF=true`; `smb` only when
+`ENABLE_SMB=true`. `loss` is full mesh and always on, like http/ssh/pmtu —
+no gate.
+
+`loss` (fping-based packet loss/jitter) is fine-grained-timed like `http`,
+**not** coarse like the `date +%s`-timed tests — it is deliberately excluded
+from the dashboard's `COARSE_TIMING` map. Its `success` is `true` whenever
+at least one probe got a reply (loss < 100%); the loss percentage itself is
+data carried in `output`, not a pass/fail gate — some loss is the normal,
+real signal this test exists to surface, and treating any nonzero loss as a
+hard failure would defeat that (same philosophy `pmtu` already uses for a
+partial/bracketed result).
+
+`smb` is SMB-shaped rather than ICMP-shaped on purpose: it is the protocol
+most likely to be broken by an inspection policy, an MSS/MTU problem
+mid-transfer, or a NAT path that passes short flows but not a sustained one.
+Every VM runs `smbd` exporting one read-only share and pulls a fixed probe
+file from every peer with `smbclient`. Full mesh, like the other tests — not
+client-only against static targets.
 
 `pmtu` is the one that earns its place in a CSR lab: it sends with DF set at
 a real payload size, which is the only test here that catches a tunnel where
@@ -122,6 +147,65 @@ correlation.
 Config: `HUB_SYSLOG_ENABLED`, `HUB_SYSLOG_BIND`, `HUB_SYSLOG_PORT`,
 `HUB_SYSLOG_MAX_ROWS`, `HUB_BUSY_TIMEOUT_MS`.
 
+### SNMP polling
+Opt-in (`HUB_SNMP_ENABLED`, default `false`). A daemon thread
+(`hub/app/snmp_poller.py`) polls each router in the `snmp_targets` table
+every `HUB_SNMP_POLL_INTERVAL` (default 60s): `sysName` plus, per interface,
+octets/errors/discards. Stored in `snmp_metrics`, rendered on the dashboard's
+"Router SNMP" panel — not part of the pair matrix, since this has nothing to
+do with VM test results. Retention is age-based (`HUB_SNMP_RETENTION_HOURS`),
+swept at the end of each poll round inside the same thread — not a violation
+of "no cron on the hub" (see Retention below), since the poller is its own
+trigger.
+
+The routers already ship the SNMP side of this (`docs/csr-baseline.cfg`):
+a read-only community restricted by ACL to the hub's management IP, and
+`snmp-server ifindex persist` so counters trend correctly across a reload.
+Polling closes a gap noted under Syslog above: **the hub gains its first
+real IP→router-name mapping**, from each router's own `sysName`, alongside
+the operator-assigned name in `snmp_targets`.
+
+**Every outgoing SNMP packet must be source-bound to `HUB_MGMT_IP`, never
+whatever interface the OS route table would otherwise pick.** This is the
+one non-negotiable part of the design — the routers' SNMP ACL only answers
+the management IP, and a request sent from the wrong interface would just
+be dropped, silently, with no obvious cause. `HUB_MGMT_IP` has no default:
+if `HUB_SNMP_ENABLED=true` and it's unset, the poller refuses to start and
+logs loudly, rather than guessing an interface. This is why
+`hub/app/snmp_client.py` is a small hand-rolled stdlib-only SNMPv2c client
+(`socket.bind((HUB_MGMT_IP, 0))` before every send) rather than shelling out
+to the `net-snmp` CLI tools, which don't reliably expose a local-source-bind
+flag across versions — using them here would risk silently defeating the
+one requirement that matters.
+
+Same never-crash discipline as `/api/health`: a router that times out or
+errors gets a `status` row, never takes down the poller thread. The
+poller's own SQLite connection needs `busy_timeout` too — it's a *third*
+writer against `hub.db`, after the results API and the syslog listener.
+
+Config: `HUB_SNMP_ENABLED`, `HUB_MGMT_IP`, `HUB_SNMP_COMMUNITY`,
+`HUB_SNMP_POLL_INTERVAL`, `HUB_SNMP_TIMEOUT_S`, `HUB_SNMP_RETENTION_HOURS`.
+
+### Config file server
+`lab-tester-serve` — busybox httpd, read-only, always on, serving
+`/srv/lab-tester-configs/` on port 8080. Bound to `0.0.0.0` deliberately:
+unlike SNMP polling (which must go *out* the management NIC specifically),
+this is a router pulling *in*, and it may not have its management-VLAN
+interface configured yet when it needs a config. Directory listing is
+busybox httpd's automatic behaviour for a path with no `index.html` — never
+place one in the served directory, or the listing stops rendering.
+
+`publish-config <file>` (on the hub) is the only write path — the web server
+itself never writes. It copies the file in, then prints the URL, the MD5,
+and the router-side commands: `copy http://<hub>:8080/<file> flash:` →
+`verify /md5` → `reload in 5` (safety net) → `configure replace` → `reload
+cancel`. Never `copy <url> running-config` — that merges into the running
+config instead of replacing it.
+
+Config: `/etc/conf.d/lab-tester-serve` (`SERVE_BIND`, `SERVE_PORT`,
+`SERVE_DIR`) — OpenRC sources this automatically for a service named
+`lab-tester-serve`, no explicit sourcing code needed.
+
 ### Agent self-update
 The hub serves `test-cycle.sh` and `register.sh` from
 `/opt/lab-tester-hub/agent/`; VMs converge on their 5-minute registration run.
@@ -134,8 +218,9 @@ with `AGENT_AUTOUPDATE=false`.
 ### Test VMs (one per router inside subnet)
 - Alpine Linux VM, ~128 MB RAM, DHCP on the router's inside interface
 - Installed to `/usr/local/bin/lab-tester/`, config at `/etc/lab-tester/config`
-- Servers: dropbear (SSH), busybox httpd via OpenRC service **`lab-httpd`**, iperf3
-- Clients: curl, ssh, traceroute, iperf3 — driven by cron every 60s
+- Servers: dropbear (SSH), busybox httpd via OpenRC service **`lab-httpd`**,
+  iperf3, `smbd` via OpenRC service **`lab-smbd`** (opt-in, `ENABLE_SMB`)
+- Clients: curl, ssh, traceroute, iperf3, smbclient, fping — driven by cron every 60s
 - Cloned from a single golden template
 
 ### Discovery
@@ -150,6 +235,16 @@ with `AGENT_AUTOUPDATE=false`.
 - Default credentials: **root / lab123** (isolated lab only) — override with
   `LAB_ROOT_PASSWORD` when running either `build-template.sh`
 - `chrony` on all VMs — the hub's clock is the mesh reference
+- `lldpd` on both roles, always-on, not gated by any `ENABLE_*` flag — LLDP
+  neighbor discovery for troubleshooting (e.g. `lldpcli show neighbors` to
+  confirm which router/port a VM actually landed on). Not a test participant:
+  it has no result type and never appears in the matrix.
+- The hub is meant to be **multi-homed** once SNMP polling is enabled: one
+  NIC on the data-plane segment it already sits on (results, dashboard,
+  syslog), one on the Management VLAN the routers' SNMP ACL is restricted
+  to (`HUB_MGMT_IP`). A single-NIC hub is fine with SNMP left off
+  (`HUB_SNMP_ENABLED=false`, the default); a second NIC is a manual add —
+  `set-static-ip` manages one interface only.
 
 ## Per-VM configuration: guestinfo
 vCenter does not expose the VM display name to the guest. Instead, custom
@@ -187,14 +282,19 @@ hub/
   build-template.sh   — builds the hub golden template
   serve.py            — production entrypoint (reads HUB_PORT at runtime)
   run.sh              — foreground launcher for debugging
-  app/                — Flask API (app.py, config.py, syslog_server.py)
+  app/                — Flask API (app.py, config.py, syslog_server.py,
+                        snmp_client.py, snmp_poller.py)
   templates/          — dashboard.html, syslog.html
   static/
   agent/              — scripts served to test VMs (created at build time)
+  services/           — firstboot.initd, login-setup.sh,
+                        serve.initd (lab-tester-serve), serve.conf
+  scripts/            — hub-setup.sh
 test-vm/
   build-template.sh   — builds the test-vm golden template
   scripts/            — register.sh, test-cycle.sh, setup.sh
-  services/           — httpd.initd (lab-httpd), iperf3.initd, crontab,
+  services/           — httpd.initd (lab-httpd), iperf3.initd,
+                        smbd.initd (lab-smbd), smb.conf, crontab,
                         lab-tester-httpd.conf, logrotate.conf,
                         firstboot.initd (lab-tester-firstboot)
   config.sample
@@ -215,6 +315,7 @@ docs/BUILD_GUIDE.md
 - Keep output minimalistic and use simple English.
 - Do not output large code snippets. Point at `file:line` and say what
   changed; the file itself is the record.
+- Do not display code changes in output unless asked to.
 
 ## Non-obvious constraints — do not regress these
 These were live bugs that a review caught; each has a comment at the site.
@@ -286,6 +387,10 @@ These were live bugs that a review caught; each has a comment at the site.
      `/usr/bin/ssh` symlink to `dbclient` and collides with
      `openssh-client-default` at that path. Plain `dropbear` is the server
      only and does not pull it in.
+   - `samba-server` and `samba-client`, not the `samba` metapackage. The
+     metapackage drags in winbind and the AD domain-controller machinery;
+     `samba-server` depends on neither (`samba-dc` depends on it, not the
+     reverse). Same failure mode as `iputils` above, in a new package.
 15. **Agent definitions use `tools:` as a comma-separated string**, not a
    YAML array — `tools: Read, Grep, Bash`. Per the Claude Code subagent
    docs; only `name` and `description` are required. Project-level

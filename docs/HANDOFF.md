@@ -1,6 +1,6 @@
 # Lab-Tester — Session Handoff
 
-Last updated: 2026-09-12. Written so a fresh session on any surface (Claude Code
+Last updated: 2026-09-13. Written so a fresh session on any surface (Claude Code
 in the terminal, the desktop app, claude.ai) can pick up without the prior chat.
 Architecture lives in `CLAUDE.md`, build order and the deployment checklist in
 `docs/DEPLOYMENT.md`, step detail in `docs/BUILD_GUIDE.md`. This file is state
@@ -43,6 +43,42 @@ and intent only.
 > sound.
 
 ## Recent changes
+
+**`loss` test type, SNMP polling, and the config file download server (2026-09-13).**
+
+Three additions. `loss` is client-compatible (no schema/contract change);
+SNMP polling and the config server are new hub subsystems, neither touching
+the existing wire contract. Regression suite CLEAR.
+
+1. **`loss` test type** (8th, dashboard letter `L`) — `fping`-based packet
+   loss %/jitter, full mesh, always on, no `ENABLE_*` gate. `success` is
+   `true` whenever at least one probe replies (loss < 100%); the loss
+   percentage itself lives in `output`, not the success field — some loss is
+   the real signal this test exists to surface, so it is never a hard
+   failure on its own (same philosophy `pmtu` already uses). Fine-grained
+   timing (real decimal-ms from `fping`), deliberately excluded from the
+   dashboard's `COARSE_TIMING` map, unlike every other non-`http` type.
+2. **SNMP polling** (`hub/app/snmp_client.py`, `snmp_poller.py`) — opt-in
+   (`HUB_SNMP_ENABLED`, default false). A background thread polls each
+   router in a new `snmp_targets` table for `sysName` and per-interface
+   counters (octets/errors/discards), stored in `snmp_metrics` and rendered
+   on a new "Router SNMP" dashboard panel. Every outgoing packet is
+   source-bound to `HUB_MGMT_IP` — the routers' SNMP ACL
+   (`docs/csr-baseline.cfg`) only answers that address, so `snmp_client.py`
+   is a small hand-rolled stdlib SNMPv2c client rather than `pysnmp` or the
+   `net-snmp` CLI tools, neither of which reliably exposes a local-source-bind
+   option. `HUB_MGMT_IP` unset while enabled is a startup failure, logged
+   loudly — never a silent bind to the wrong interface. This also gives the
+   hub its first real IP→router-name mapping, from each router's own
+   `sysName` (see the syslog correlation caveat above).
+3. **Config file download server** — `lab-tester-serve` (busybox httpd),
+   always on, serves `/srv/lab-tester-configs/` read-only on port 8080,
+   bound to every address (deliberately the opposite of SNMP's binding: a
+   router pulling a config may not have its management NIC configured yet).
+   Directory listing is automatic. `publish-config <file>` on the hub is the
+   only write path. This closes the gap the "Designed but NOT implemented"
+   section below used to list under "Config file server" — removed from
+   there now that it's built.
 
 **Router config templates, hub self-health, and hub zero-touch setup (2026-09-12).**
 
@@ -173,12 +209,6 @@ but **nothing here works today**:
   no `chrony.conf` is written, there is no `set-ntp-clients` helper and no
   access list, and `test-vm/scripts/setup.sh` does not configure chrony on the
   VMs. The hub disciplines its own clock and serves time to nobody.
-- **Config file server.** No `lab-tester-serve` service, no `publish-config`
-  helper, no port 8080, no `/etc/conf.d/lab-tester-serve`, no `SERVE_BIND`.
-  The intent — read-only config files for routers to pull with `copy http://`,
-  no write path, applied via `copy` → `verify /md5` → `reload in 5` →
-  `configure replace` rather than `copy <url> running-config`, which merges —
-  is worth keeping if it is ever built.
 - **`set-static-ip` per-interface state.** The helper takes
   `<ip/cidr> <gateway>` only; there is no interface argument and no
   `/etc/lab-tester/net.d`. Configuring a second NIC still overwrites the first.

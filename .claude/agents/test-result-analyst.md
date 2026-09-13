@@ -38,10 +38,13 @@ Sample count, first and last `received_at`, distinct sources and targets.
 
 **Expected sample rates differ by test type — do not apply one rate to all of them:**
 
-- `http`, `ssh`, `pmtu` — about one per minute per pair.
+- `http`, `ssh`, `pmtu`, `loss` — about one per minute per pair, always on (no gate).
 - `traceroute` — about one per **five** minutes (`TRACEROUTE_INTERVAL`), *plus* extra samples whenever HTTP or SSH to that target failed, since failure triggers it on demand. So a low traceroute count is normal, and an unusually **high** one is a signal that the pair has been failing.
 - `dns` — one per source per cycle, only where `DNS_SERVER` is configured. Absent entirely is normal.
 - `iperf3` — only where `ENABLE_IPERF=true`, and individual runs are skipped on server contention rather than recorded as failures.
+- `smb` — only where `ENABLE_SMB=true`, about one per minute per pair like `http`/`ssh`/`pmtu`. Unlike iperf3 there is no contention skip — `smbd` forks per connection, so a missing sample means the fetch failed or timed out, not that the server was busy.
+
+**`loss`'s `success` field is not what it looks like.** It is `true` whenever at least one probe got a reply — a pair with 40% loss every cycle still shows a 100% `loss` success rate, because loss data lives in `output` (the `%loss` text), not in `success`. Do not report a pair as "healthy" on `loss` without parsing `output`; a 100% success rate here proves only "never fully dark," not "clean."
 
 Judging traceroute against a one-per-minute baseline would report an ~80% reporting gap that is purely by design.
 
@@ -69,7 +72,7 @@ Group failures by the target's router and by the source's router (join through `
 
 Per pair and test type: median, p95, and trend across the window. Report drift only when it is large relative to the spread.
 
-**Only `http` has fine-grained timing.** `ssh`, `traceroute`, `pmtu`, `dns` and `iperf3` are timed to whole seconds, so their `latency_ms` is always a multiple of 1000 and a value of 0 means "under a second", not "instant". Never report a trend or a percentile for those — there is no resolution to trend.
+**`http` and `loss` have fine-grained timing; nothing else does.** `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3` and `smb` are timed to whole seconds, so their `latency_ms` is always a multiple of 1000 and a value of 0 means "under a second", not "instant". Never report a trend or a percentile for those — there is no resolution to trend. `loss`'s `latency_ms` is fping's real decimal-ms average, same resolution as `http`.
 
 ### Step 6: Traceroute paths
 

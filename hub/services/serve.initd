@@ -1,0 +1,45 @@
+#!/sbin/openrc-run
+# OpenRC init script for the busybox httpd that serves router config files
+# for download -- originally designed in docs/HANDOFF.md, built here.
+# Read-only files a router pulls with
+# `copy http://<hub>:<port>/<file> flash:`, checked with `verify /md5`, then
+# applied locally with `configure replace` (never `copy <url> running-config`,
+# which merges into the running config instead of replacing it).
+#
+# Config in /etc/conf.d/lab-tester-serve: SERVE_BIND, SERVE_PORT, SERVE_DIR.
+# OpenRC sources that file automatically for a service named lab-tester-serve
+# -- no explicit sourcing needed here.
+
+name="lab-tester-serve"
+description="lab-tester config file server (busybox httpd, read-only)"
+
+SERVE_BIND="${SERVE_BIND:-0.0.0.0}"
+SERVE_PORT="${SERVE_PORT:-8080}"
+SERVE_DIR="${SERVE_DIR:-/srv/lab-tester-configs}"
+
+command="/usr/sbin/httpd"
+command_args="-f -p ${SERVE_BIND}:${SERVE_PORT} -h ${SERVE_DIR} -c /etc/lab-tester-serve.conf"
+command_background="yes"
+pidfile="/run/lab-tester-serve.pid"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    # busybox installs httpd in /usr/sbin on some releases and /bin on others
+    # -- same fallback test-vm's lab-httpd init script uses.
+    if [ ! -x "$command" ]; then
+        if [ -x /bin/httpd ]; then
+            command="/bin/httpd"
+        elif [ -x /usr/bin/httpd ]; then
+            command="/usr/bin/httpd"
+        else
+            eerror "httpd binary not found (is busybox-extras installed?)"
+            return 1
+        fi
+    fi
+
+    checkpath --directory --mode 0755 "$SERVE_DIR"
+}

@@ -85,10 +85,34 @@ def init_db():
             message     TEXT,
             raw         TEXT
         );
+        CREATE TABLE IF NOT EXISTS snmp_targets (
+            name      TEXT PRIMARY KEY,
+            mgmt_ip   TEXT NOT NULL,
+            community TEXT,
+            note      TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS snmp_metrics (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            router_name      TEXT NOT NULL,
+            mgmt_ip          TEXT NOT NULL,
+            sys_name         TEXT,
+            if_descr         TEXT,
+            if_in_octets     INTEGER,
+            if_out_octets    INTEGER,
+            if_in_errors     INTEGER,
+            if_out_errors    INTEGER,
+            if_in_discards   INTEGER,
+            if_out_discards  INTEGER,
+            polled_at        TEXT NOT NULL,
+            status           TEXT NOT NULL,
+            error_detail     TEXT
+        );
         CREATE INDEX IF NOT EXISTS idx_results_received ON results(received_at);
         CREATE INDEX IF NOT EXISTS idx_results_source_target ON results(source, target_hostname);
         CREATE INDEX IF NOT EXISTS idx_syslog_received ON syslog(received_at);
         CREATE INDEX IF NOT EXISTS idx_syslog_host ON syslog(host);
+        CREATE INDEX IF NOT EXISTS idx_snmp_metrics_polled ON snmp_metrics(polled_at);
+        CREATE INDEX IF NOT EXISTS idx_snmp_metrics_router ON snmp_metrics(router_name, polled_at);
     """)
 
     # Migration for databases created before received_at existed.
@@ -328,7 +352,7 @@ def api_results_pair(source, target):
 # (a loopback answers traceroute and a PMTU probe but has no HTTP server).
 # ---------------------------------------------------------------------------
 
-VALID_TESTS = ("http", "ssh", "traceroute", "iperf3", "pmtu", "dns")
+VALID_TESTS = ("http", "ssh", "traceroute", "iperf3", "pmtu", "dns", "smb", "loss")
 
 
 @app.route("/targets", methods=["GET"])
@@ -385,6 +409,138 @@ def delete_target(name):
     if cur.rowcount == 0:
         return jsonify({"error": "not found"}), 404
     return jsonify({"status": "deleted", "name": name})
+
+
+# ---------------------------------------------------------------------------
+# SNMP targets and polled metrics
+#
+# snmp_poller.py is the writer — a background thread, started from serve.py
+# and gated on config.SNMP_ENABLED, that polls each row here and appends to
+# snmp_metrics. These routes only manage the target list and read what was
+# polled; a fresh table from `targets` deliberately, since a router the hub
+# polls itself is a different concept from an address merged into VM cycles.
+# ---------------------------------------------------------------------------
+
+@app.route("/snmp/targets", methods=["GET"])
+def list_snmp_targets():
+    db = get_db()
+    rows = db.execute(
+        "SELECT name, mgmt_ip, community, note FROM snmp_targets ORDER BY name"
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/snmp/targets", methods=["POST"])
+def add_snmp_target():
+    """Add or update a router to poll. Mirrors /targets's validation style."""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Body must be a JSON object"}), 400
+
+    name = data.get("name")
+    mgmt_ip = data.get("mgmt_ip")
+    if not name or not mgmt_ip:
+        return jsonify({"error": "name and mgmt_ip are required"}), 400
+
+    community = data.get("community")
+    community = str(community) if community else None
+
+    db = get_db()
+    db.execute(
+        """INSERT INTO snmp_targets (name, mgmt_ip, community, note)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(name) DO UPDATE SET
+               mgmt_ip=excluded.mgmt_ip, community=excluded.community, note=excluded.note""",
+        (str(name), str(mgmt_ip), community, str(data.get("note", ""))),
+    )
+    db.commit()
+    return jsonify({"status": "ok", "name": name, "mgmt_ip": mgmt_ip})
+
+
+@app.route("/snmp/targets/<name>", methods=["DELETE"])
+def delete_snmp_target(name):
+    db = get_db()
+    cur = db.execute("DELETE FROM snmp_targets WHERE name = ?", (name,))
+    db.commit()
+    if cur.rowcount == 0:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"status": "deleted", "name": name})
+
+
+def snmp_metric_row(r):
+    """Render a snmp_metrics row with polled_at in ISO, like every other route."""
+    d = dict(r)
+    d["polled_at"] = iso(d["polled_at"])
+    return d
+
+
+@app.route("/api/snmp", methods=["GET"])
+def api_snmp():
+    """Recent polled interface metrics. ?router=<name>, ?minutes=N (default 10).
+
+    Windowing mirrors /api/results exactly: filter on polled_at (this table's
+    equivalent of received_at — the hub's own clock, never a device's), and a
+    negative minutes value is folded to positive rather than building a
+    datetime() expression that silently matches nothing.
+    """
+    minutes = request.args.get("minutes", "10")
+    try:
+        minutes = int(minutes)
+    except ValueError:
+        minutes = 10
+    minutes = abs(minutes)
+
+    where = ["polled_at >= datetime('now', ? || ' minutes')"]
+    params = ["-{:d}".format(minutes)]
+
+    router = request.args.get("router")
+    if router:
+        where.append("router_name = ?")
+        params.append(router)
+
+    db = get_db()
+    rows = db.execute(
+        """SELECT router_name, mgmt_ip, sys_name, if_descr, if_in_octets, if_out_octets,
+                  if_in_errors, if_out_errors, if_in_discards, if_out_discards,
+                  polled_at, status, error_detail
+           FROM snmp_metrics
+           WHERE """ + " AND ".join(where) + """
+           ORDER BY polled_at DESC""",
+        params,
+    ).fetchall()
+    return jsonify([snmp_metric_row(r) for r in rows])
+
+
+@app.route("/api/snmp/sources", methods=["GET"])
+def api_snmp_sources():
+    """Configured routers with their most recent poll's sys_name and status.
+
+    Mirrors /api/syslog/sources's role as the thing a filter dropdown (or, here,
+    a summary panel) is built from — one row per configured target rather than
+    per message, since a poll round writes one row per interface and callers
+    want "how is this router doing", not a raw metrics dump.
+    """
+    db = get_db()
+    rows = db.execute(
+        """SELECT t.name AS name, t.mgmt_ip AS mgmt_ip,
+                  m.sys_name AS sys_name, m.status AS status,
+                  m.polled_at AS polled_at, m.error_detail AS error_detail
+           FROM snmp_targets t
+           LEFT JOIN snmp_metrics m ON m.id = (
+               SELECT id FROM snmp_metrics
+               WHERE router_name = t.name
+               ORDER BY polled_at DESC, id DESC
+               LIMIT 1
+           )
+           ORDER BY t.name"""
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d["polled_at"]:
+            d["polled_at"] = iso(d["polled_at"])
+        out.append(d)
+    return jsonify(out)
 
 
 # ---------------------------------------------------------------------------

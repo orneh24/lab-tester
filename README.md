@@ -4,14 +4,17 @@
 
 Network end-to-end connectivity testing for the "inside" interfaces of
 virtualized Cisco CSR1000v routers in an R&S lab. Goes beyond ICMP — validates
-real TCP connections (HTTP, SSH, iperf3), path MTU, DNS resolution and
-traceroute, correlates failures against the routers' own syslog, and
-visualizes results on a web dashboard.
+real TCP connections (HTTP, SSH, SMB, iperf3), packet loss/jitter, path MTU,
+DNS resolution and traceroute, correlates failures against the routers' own
+syslog, polls their SNMP interface counters, and visualizes results on a web
+dashboard.
 
 ![Dashboard with a synthetic 5-router mesh, one failing path selected, and its syslog correlation panel open](docs/img/dashboard-mock.jpg)
 
 *Mock data — a synthetic 5-router mesh seeded locally to exercise every panel,
-not a real lab. See [Running the hub locally](#running-the-hub-locally).*
+not a real lab. See [Running the hub locally](#running-the-hub-locally).
+Predates the `smb`/`B` column added below — screenshot regeneration is
+optional and out of scope for that change.*
 
 ## What it tests
 
@@ -23,6 +26,8 @@ not a real lab. See [Running the hub locally](#running-the-hub-locally).*
 | Path MTU | M | every VM pair, static targets — catches a tunnel that passes small packets but hangs on large transfers |
 | DNS | D | one test per source against a resolver, not a pair — its own panel |
 | iperf3 | I | every VM pair, when `ENABLE_IPERF=true` |
+| SMB | B | every VM pair, when `ENABLE_SMB=true` |
+| Loss/jitter | L | every VM pair, always on — packet loss % and RTT jitter via `fping` |
 
 **Static targets** — router loopbacks, outside hosts — run no agent and are
 configured once on the hub, merged into every VM's cycle.
@@ -31,6 +36,16 @@ configured once on the hub, merged into every VM's cycle.
 UDP/514. Every test card and pair header in the dashboard links to a `/syslog`
 window pinned to that sample's ±5 minutes, so a failing path can be read next
 to what the routers said at the time.
+
+**SNMP polling** — opt-in (`HUB_SNMP_ENABLED`). The hub polls each router's
+interface counters (errors, discards, throughput) and `sysName`, rendered on
+its own dashboard panel. Requires the hub to be multi-homed, with outgoing
+polls source-bound to a management-VLAN NIC (`HUB_MGMT_IP`) — the routers'
+SNMP ACL only answers that address.
+
+**Config file server** — `lab-tester-serve` serves `/srv/lab-tester-configs/`
+read-only on port 8080, with directory listing. `publish-config <file>` on
+the hub is the only write path; a router pulls its config with `copy http://`.
 
 ## Architecture
 

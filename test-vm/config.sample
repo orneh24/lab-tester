@@ -74,6 +74,25 @@ PMTU_SIZE=1472
 # will inflate the latency figures other VMs record at the same moment.
 ENABLE_IPERF=false
 
+# Enable the SMB probe test (true/false). Every test VM runs a Samba server
+# (lab-smbd) exporting one small read-only share, and every peer fetches a
+# fixed probe file from it. SMB is chatty and session-oriented, so it is the
+# test most likely to catch an inspection policy or a NAT/MTU problem that
+# HTTP, SSH and iperf3 miss.
+#
+# Two costs to weigh before enabling on a 128 MB VM: smbd's own resident
+# memory while running, and up to ~15s added to the per-peer cycle budget
+# (the outer `timeout 15` in run_smb_test, fetching an 8 MB probe file).
+ENABLE_SMB=false
+
+# Loss/jitter probe (fping) tuning — always on, no ENABLE_* flag. Defaults
+# are inline in run_loss_test(); uncomment to override. Fewer/shorter probes
+# reduce per-peer cycle cost at the price of loss-percentage resolution
+# (10 probes = 10% resolution).
+#LOSS_COUNT=10
+#LOSS_PERIOD_MS=100
+#LOSS_TIMEOUT_MS=500
+
 # DNS resolver to query, e.g. 10.0.0.53. Leave empty to skip the DNS test
 # entirely — labs without DNS in the topology then see no red cells for it.
 DNS_SERVER=

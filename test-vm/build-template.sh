@@ -73,7 +73,11 @@ apk add --no-cache \
     open-vm-tools \
     logrotate \
     chrony \
-    iputils-ping
+    iputils-ping \
+    fping \
+    samba-server \
+    samba-client \
+    lldpd
 
 log "Packages installed"
 
@@ -92,6 +96,20 @@ log "Packages installed"
 #   dropbear         — the SSH *server* only. Do NOT add the `dropbear-ssh`
 #                      subpackage: it installs its own /usr/bin/ssh symlink to
 #                      dbclient and would collide with openssh-client-default.
+#   samba-server     — provides /usr/sbin/smbd only. Deliberately NOT the
+#                      `samba` metapackage, which drags in winbind and the AD
+#                      DC machinery this test has no use for on a 128 MB VM.
+#   samba-client     — provides /usr/bin/smbclient, the probe tool
+#                      test-cycle.sh's run_smb_test() drives. Split from
+#                      samba-server so a static SMB target could in principle
+#                      be probed from a VM that never runs the server side,
+#                      though in this mesh every VM installs both.
+#   fping            — verified against the Alpine index: a real package,
+#                      main repo (not community), ~56 KiB, installs to
+#                      /usr/sbin/fping. No path collision or metapackage trap
+#                      like the entries above — a client-only ICMP tool with
+#                      nothing else on the image at that path. run_loss_test()
+#                      drives it for the always-on loss/jitter probe.
 
 # Verify the ping we need actually landed; a BusyBox ping here means the PMTU
 # test will fail everywhere with a confusing "invalid option" rather than a
@@ -101,6 +119,23 @@ if ! ping -M do -c 1 -s 1 127.0.0.1 >/dev/null 2>&1; then
     log "         check that iputils-ping installed over BusyBox's /bin/ping"
 fi
 
+# Verify the SMB tools actually landed. Same warn-don't-fail discipline as
+# the ping check above: a missing binary here means every smb test fails
+# with a confusing "not found" rather than a real result, but it should not
+# abort an otherwise-good template build.
+if ! command -v smbclient >/dev/null 2>&1 || ! smbclient --version >/dev/null 2>&1; then
+    log "WARNING: smbclient missing or not runnable — smb tests will not work"
+fi
+if [ ! -x /usr/sbin/smbd ] || ! /usr/sbin/smbd -b >/dev/null 2>&1; then
+    log "WARNING: smbd missing or not runnable — smb server will not start"
+fi
+
+# fping has no BusyBox-replacement gotcha to check for (unlike ping) — a
+# simple presence check is enough to catch a broken install.
+if ! command -v fping >/dev/null 2>&1; then
+    log "WARNING: fping missing — loss/jitter tests will not work"
+fi
+
 # Enable open-vm-tools on boot
 rc-update add open-vm-tools default
 
@@ -108,6 +143,12 @@ rc-update add open-vm-tools default
 # across the mesh; unsynchronised clocks make per-test timings meaningless
 # and traceroute correlation impossible to read.
 rc-update add chronyd default
+
+# LLDP neighbor discovery, for troubleshooting and network discovery — not a
+# test type, just always-on infrastructure like chrony. Lets an engineer read
+# `lldpcli show neighbors` on a VM to confirm which router/port it's actually
+# plugged into without console access to the router.
+rc-update add lldpd default
 
 # -------------------------------------------------------------------
 # 2b. Set default lab credentials
@@ -157,6 +198,21 @@ log "Creating directories"
 mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$LOG_DIR" "$WEB_ROOT"
 
 # -------------------------------------------------------------------
+# 3b. SMB probe share
+#
+# One small, fixed file that every peer fetches over SMB — the protocol
+# most likely to be broken by an inspection policy, an MSS/MTU problem
+# mid-transfer, or a NAT path that only tolerates short-lived flows. The
+# share and this file must survive cloning (cleanup below only removes the
+# Samba state databases, not this directory).
+# -------------------------------------------------------------------
+log "Creating SMB probe share"
+mkdir -p /srv/lab-tester-smb
+dd if=/dev/zero of=/srv/lab-tester-smb/probe.bin bs=1M count=8 2>/dev/null
+chmod 0444 /srv/lab-tester-smb/probe.bin
+chmod 0555 /srv/lab-tester-smb
+
+# -------------------------------------------------------------------
 # 4. Install scripts
 # -------------------------------------------------------------------
 log "Installing scripts"
@@ -193,6 +249,16 @@ chmod +x /etc/init.d/lab-httpd
 # prompt nobody is there to answer.
 cp -f "${SCRIPT_DIR}/services/firstboot.initd" /etc/init.d/lab-tester-firstboot
 chmod +x /etc/init.d/lab-tester-firstboot
+
+# Samba (SMB probe server). Config is installed unconditionally like the
+# other service files, but — unlike dropbear/lab-httpd below — lab-smbd is
+# deliberately NOT rc-update'd here. It only starts when a clone's config
+# sets ENABLE_SMB=true, which setup.sh enforces at boot time, matching how
+# iperf3 is handled.
+mkdir -p /etc/samba
+cp -f "${SCRIPT_DIR}/services/smb.conf" /etc/samba/smb.conf
+cp -f "${SCRIPT_DIR}/services/smbd.initd" /etc/init.d/lab-smbd
+chmod +x /etc/init.d/lab-smbd
 
 # Log rotation — test-cycle.sh appends traceroute output every 60 seconds.
 mkdir -p /etc/logrotate.d
@@ -268,6 +334,13 @@ log "Cleaning up for template conversion"
 # The shared mesh keypair in /etc/lab-tester/ is deliberately kept — it has
 # to survive cloning for the SSH test to work.
 rm -f /etc/dropbear/dropbear_*_host_key
+
+# Remove Samba's state databases (secrets.tdb and friends carry a machine
+# SID / server GUID) so each clone generates its own on first start instead
+# of every VM in the mesh answering with the same identity. The share
+# directory and probe.bin must survive cloning, so only /var/lib/samba/ is
+# touched here.
+rm -rf /var/lib/samba/*
 
 # Remove any config left from build-time testing so clones start clean and
 # setup.sh actually runs its configuration path. The first-boot stamp must

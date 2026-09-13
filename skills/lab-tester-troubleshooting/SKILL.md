@@ -67,9 +67,15 @@ to the VM logs before looking at the network.
 
 A failing direction with a working reverse points at the *target*, not the path:
 
-- Target's server is down — dropbear, busybox httpd, or iperf3 not started. Verify locally on the target first: `nc -z <ip> 22 80 5201` from a neighbour.
+- Target's server is down — dropbear, busybox httpd, iperf3, or (if `ENABLE_SMB=true`) `lab-smbd` not started. Verify locally on the target first: `nc -z <ip> 22 80 445 5201` from a neighbour.
 - Target firewalled at the host level (Alpine default has none — if `iptables` rules exist, someone added them).
 - If both directions fail for every pair crossing one router, and traceroute dies at that hop, it is a router problem.
+- Before concluding it's the router, check `lldpcli show neighbors` on the VM (always-on, not gated) — a VM on the wrong vSwitch port group registers and often still gets a DHCP lease, but is plugged into the wrong place entirely.
+- If SNMP polling is on, check the dashboard's "Router SNMP" panel for nonzero interface errors/discards on the routers behind the pair — a queueing/physical problem that a clean `show ip access-lists` won't explain.
+
+## `loss` Reads Differently Than the Other Types
+
+Its `success` field is `true` on any reply at all — a pair silently losing 30% of packets every cycle still shows `success: true` on every `loss` row. The loss percentage and jitter live in `output` (the `%loss`/`min/avg/max` text), not in `success`. When a link "passes" every test but users report intermittent slowness, `loss`'s `output` is the first place to look — everything else here is binary pass/fail and won't show it.
 
 ## Reading Traceroute Output
 
@@ -130,7 +136,7 @@ show logging | include denied
 debug ip icmp        ! sparingly, and undebug all afterwards
 ```
 
-Test type matters: ICMP passing while TCP/80 fails is almost always an ACL permitting `icmp` but not `tcp eq www`. iperf3 needs 5201/tcp open in both directions.
+Test type matters: ICMP passing while TCP/80 fails is almost always an ACL permitting `icmp` but not `tcp eq www`. iperf3 needs 5201/tcp open in both directions; smb needs 445/tcp open in both directions.
 
 ## Hub-Side Checks
 

@@ -27,6 +27,10 @@ fi
 . "$CONFIG"
 
 ENABLE_IPERF="${ENABLE_IPERF:-false}"
+# Inline default, not just config.sample: setup.sh never rewrites an
+# existing config file, so every already-deployed VM runs this script
+# against a config with no ENABLE_SMB line at all.
+ENABLE_SMB="${ENABLE_SMB:-false}"
 MY_HOSTNAME=$(hostname)
 SSH_KEY="${SSH_KEY:-/etc/lab-tester/id_lab}"
 
@@ -239,6 +243,84 @@ run_pmtu_test() {
 }
 
 # -------------------------------------------------------------------
+# Loss/jitter probe.
+#
+# Every other test here is pass/fail: it either connects or it doesn't. Real
+# links degrade gracefully — a small amount of loss or RTT jitter on an
+# otherwise-working path is a real, common signal none of
+# http/ssh/traceroute/pmtu/dns/iperf3/smb surface, because they only notice a
+# fully broken path.
+#
+# Mirrors pmtu's philosophy, not a binary tool's: success means the target
+# replied at all (loss < 100%), not zero loss. Some loss is exactly the
+# condition this test exists to report — treating any loss as failure would
+# turn nearly every real link red in the matrix and defeat the point. Loss
+# percentage and RTT spread are carried as data in `output`, never as the
+# pass/fail gate. Only a fully dark target (100% loss, no replies at all) is
+# success:false.
+#
+# Runs unconditionally, every cycle, against every peer and any static target
+# that declares it — unlike iperf3/smb there is no ENABLE_ flag, so this has
+# to stay cheap with no opt-out. 10 probes at a 100ms period with a 500ms
+# per-probe timeout measured ~1.4s worst case against a fully dark target
+# (9 x 100ms inter-probe spacing + the final 500ms wait for a reply that
+# never comes) and ~0.9s against a reachable one — comfortably under 2s per
+# peer either way.
+# -------------------------------------------------------------------
+run_loss_test() {
+    _target_ip="$1"
+    _count="${LOSS_COUNT:-10}"
+    _period="${LOSS_PERIOD_MS:-100}"
+    _timeout="${LOSS_TIMEOUT_MS:-500}"
+
+    # fping's quiet-mode summary line goes to stderr, not stdout — capture
+    # both. -q gives one line per target:
+    #   reachable:   "<ip> : xmt/rcv/%loss = 10/10/0%, min/avg/max = a/b/c"
+    #   unreachable: "<ip> : xmt/rcv/%loss = 10/0/100%"          (no rtt part)
+    _output=$(fping -c "$_count" -p "$_period" -t "$_timeout" -q "$_target_ip" 2>&1) || true
+
+    _summary_line=$(printf '%s' "$_output" | grep '%loss' | tail -1)
+    _loss_pct=$(printf '%s' "$_summary_line" | sed -n 's/.*%loss = [0-9]*\/[0-9]*\/\([0-9]*\)%.*/\1/p')
+
+    if [ -z "$_loss_pct" ]; then
+        # fping itself did not produce a parseable summary (bad target,
+        # binary missing) — report a failed probe rather than guessing.
+        _success="false"
+        _latency="null"
+        _summary="loss probe failed: $(printf '%s' "$_output" | tr '\n' ' ')"
+    else
+        if [ "$_loss_pct" -lt 100 ]; then
+            _success="true"
+        else
+            _success="false"
+        fi
+
+        _rtt=$(printf '%s' "$_summary_line" | sed -n 's#.*min/avg/max = \([0-9.]*\)/\([0-9.]*\)/\([0-9.]*\).*#\1 \2 \3#p')
+        if [ -n "$_rtt" ]; then
+            _min=$(printf '%s' "$_rtt" | awk '{print $1}')
+            _avg=$(printf '%s' "$_rtt" | awk '{print $2}')
+            _max=$(printf '%s' "$_rtt" | awk '{print $3}')
+            # fping already reports in milliseconds with real decimal
+            # precision (sub-ms on a LAN), unlike the whole-second
+            # date-based timers the coarse tests use — pass it through
+            # arithmetically (awk, not a printf string trick) rather than
+            # truncating to a whole-second elapsed time.
+            _latency=$(printf '%s' "$_avg" | awk '{printf "%.2f", $1}')
+            _summary="Loss: ${_loss_pct}% avg/min/max: ${_avg}/${_min}/${_max} ms"
+        else
+            # 100% loss: no RTT stats to report, only the loss line.
+            _latency="null"
+            _summary="Loss: ${_loss_pct}% (no replies)"
+        fi
+    fi
+
+    _output_escaped=$(json_escape "$_summary")
+
+    printf '{"target_hostname":"%s","target_ip":"%s","test_type":"loss","success":%s,"latency_ms":%s,"output":%s,"timestamp":"%s"}' \
+        "$2" "$_target_ip" "$_success" "$_latency" "$_output_escaped" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+}
+
+# -------------------------------------------------------------------
 # DNS resolution test.
 #
 # Only runs when DNS_SERVER is configured; skipped silently otherwise so
@@ -316,6 +398,55 @@ run_iperf3_test() {
     _output_escaped=$(json_escape "$_summary")
 
     printf '{"target_hostname":"%s","target_ip":"%s","test_type":"iperf3","success":%s,"latency_ms":%s,"output":%s,"timestamp":"%s"}' \
+        "$2" "$_target_ip" "$_success" "$_latency" "$_output_escaped" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+}
+
+# -------------------------------------------------------------------
+# Run SMB test against a target.
+#
+# SMB is chatty and session-oriented — the test type most likely to catch an
+# inspection policy, an MSS/MTU problem mid-transfer, or a NAT path that only
+# tolerates short-lived flows, none of which HTTP/SSH/iperf3 would notice.
+# Every test VM runs smbd exporting one small read-only share (lab-smbd,
+# gated by ENABLE_SMB); this pulls the fixed probe file from a peer.
+#
+# Unlike iperf3, smbd forks a child per connection, so simultaneous peers
+# hitting the same server in one cycle is normal, not contention — there is
+# no retry/skip path here.
+# -------------------------------------------------------------------
+run_smb_test() {
+    _target_ip="$1"
+    _share="${SMB_SHARE:-labshare}"
+    _probe_file="${SMB_PROBE_FILE:-probe.bin}"
+    _start_s=$(date +%s)
+
+    # Outer `timeout` is the hard bound test-cycle.sh's budget depends on;
+    # smbclient's own -t is its per-operation socket timeout. -N is a null
+    # (anonymous) session, matching smb.conf's "map to guest = Bad User".
+    # probe.bin is 8 MB (build-template.sh); 15s/12s give a slower-but-healthy
+    # link room to finish without being mistaken for a black hole.
+    _output=$(timeout 15 smbclient -N "//${_target_ip}/${_share}" -t 12 \
+        -c "get ${_probe_file} /dev/null" 2>&1) || true
+
+    _end_s=$(date +%s)
+    _elapsed=$(( _end_s - _start_s ))
+    _latency=$(( _elapsed * 1000 ))
+
+    # smbclient prints a "getting file ... (RATE kb/s)" line on a completed
+    # transfer; anything else (auth failure, connection refused, timeout) is
+    # a failure.
+    if printf '%s' "$_output" | grep -qE 'getting file.*\([0-9.]+.*/sec\)'; then
+        _success="true"
+        _rate=$(printf '%s' "$_output" | grep -oE '\([0-9.]+ *[A-Za-z]*/sec\)' | head -1 | tr -d '()')
+        _summary="Transfer OK: ${_rate:-unknown rate}"
+    else
+        _success="false"
+        _summary="smb failed: $(printf '%s' "$_output" | tail -2 | tr '\n' ' ')"
+    fi
+
+    _output_escaped=$(json_escape "$_summary")
+
+    printf '{"target_hostname":"%s","target_ip":"%s","test_type":"smb","success":%s,"latency_ms":%s,"output":%s,"timestamp":"%s"}' \
         "$2" "$_target_ip" "$_success" "$_latency" "$_output_escaped" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 }
 
@@ -402,6 +533,12 @@ while [ "$i" -lt "$ENDPOINT_COUNT" ]; do
     PMTU_RESULT=$(run_pmtu_test "$EP_IP" "$EP_HOSTNAME") || true
     append_result "$PMTU_RESULT"
 
+    # Loss/jitter probe. Unconditional like http/ssh/pmtu above — no
+    # ENABLE_ gate — so it has to stay cheap; see run_loss_test()'s comment.
+    log "  Loss probe -> $EP_IP"
+    LOSS_RESULT=$(run_loss_test "$EP_IP" "$EP_HOSTNAME") || true
+    append_result "$LOSS_RESULT"
+
     # Traceroute when scheduled, or when something just failed on this path.
     _failed_now="no"
     printf '%s' "$HTTP_RESULT$SSH_RESULT" | grep -q '"success":false' && _failed_now="yes"
@@ -419,6 +556,15 @@ while [ "$i" -lt "$ENDPOINT_COUNT" ]; do
         log "  iperf3 test -> $EP_IP"
         IPERF_RESULT=$(run_iperf3_test "$EP_IP" "$EP_HOSTNAME") || IPERF_RESULT=""
         append_result "$IPERF_RESULT"
+    fi
+
+    # SMB (optional). No skip case here (unlike iperf3) — smbd forks per
+    # connection, so this always produces a result and append_result is used
+    # only for the ordinary "one failure shouldn't drop the others" reason.
+    if [ "$ENABLE_SMB" = "true" ]; then
+        log "  SMB test -> $EP_IP"
+        SMB_RESULT=$(run_smb_test "$EP_IP" "$EP_HOSTNAME") || true
+        append_result "$SMB_RESULT"
     fi
 
     TESTED=$((TESTED + 1))
@@ -450,8 +596,22 @@ while [ "$j" -lt "$TARGET_COUNT" ]; do
             R=$(run_pmtu_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
     esac
     case ",$TG_TESTS," in
+        # A router loopback is a legitimate loss/jitter target, same as pmtu
+        # and traceroute above — no ENABLE_ gate, always available to declare.
+        *,loss,*)
+            R=$(run_loss_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
+    esac
+    case ",$TG_TESTS," in
         *,dns,*)
             R=$(run_dns_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
+    esac
+    case ",$TG_TESTS," in
+        # A static SMB target is realistic (a real file server), unlike a
+        # router loopback — so this gets an arm even though iperf3 doesn't.
+        *,smb,*)
+            if [ "$ENABLE_SMB" = "true" ]; then
+                R=$(run_smb_test "$TG_IP" "$TG_NAME") || true; append_result "$R"
+            fi ;;
     esac
     case ",$TG_TESTS," in
         *,traceroute,*)

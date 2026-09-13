@@ -23,6 +23,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HUB_INSTALL_DIR="/opt/lab-tester-hub"
 DB_DIR="/var/lib/lab-tester"
+SERVE_DIR="/srv/lab-tester-configs"
 LAB_ROOT_PASSWORD="${LAB_ROOT_PASSWORD:-lab123}"
 
 # -------------------------------------------------------------------
@@ -70,9 +71,15 @@ apk add --no-cache \
     sqlite \
     curl \
     open-vm-tools \
-    chrony
+    chrony \
+    lldpd \
+    busybox-extras
 
 log "Packages installed"
+
+# busybox-extras provides the httpd applet lab-tester-serve runs (the config
+# file download server, section 9b below) -- same package test-vm's lab-httpd
+# already depends on for the identical reason.
 
 # Enable open-vm-tools on boot
 rc-update add open-vm-tools default
@@ -80,6 +87,10 @@ rc-update add open-vm-tools default
 # The hub stamps every result with its own receipt time, so its clock is the
 # reference for the whole mesh. Keep it disciplined.
 rc-update add chronyd default
+
+# LLDP neighbor discovery, for troubleshooting and network discovery — not a
+# test participant, just always-on infrastructure like chrony.
+rc-update add lldpd default
 
 # -------------------------------------------------------------------
 # 2b. Set default lab credentials
@@ -93,7 +104,7 @@ log "Credentials: root / ${LAB_ROOT_PASSWORD}"
 # 3. Create directories
 # -------------------------------------------------------------------
 log "Creating directories"
-mkdir -p "$HUB_INSTALL_DIR" "$DB_DIR"
+mkdir -p "$HUB_INSTALL_DIR" "$DB_DIR" "$SERVE_DIR"
 
 # -------------------------------------------------------------------
 # 4. Copy hub application
@@ -215,10 +226,31 @@ HUB_BUSY_TIMEOUT_MS=5000
 # OpenRC services to report on, comma-separated. Queried with
 # `rc-service <name> status`; a missing binary, timeout, or non-zero exit
 # degrades to a per-service "unknown" rather than failing the endpoint.
-HUB_HEALTH_SERVICES=lab-tester-hub,chronyd,dropbear,open-vm-tools
+HUB_HEALTH_SERVICES=lab-tester-hub,chronyd,dropbear,open-vm-tools,lldpd
 
 # Timeout for each rc-service check, in seconds.
 HUB_HEALTH_SERVICE_TIMEOUT_S=3
+
+# --- SNMP polling (interface counters, opt-in) -------------------------
+# Off by default. Enabling requires the hub to have an address on the
+# routers' Management VLAN -- every poll is source-bound to HUB_MGMT_IP,
+# because the routers' SNMP ACL (docs/csr-baseline.cfg) only answers it.
+# Leaving HUB_MGMT_IP empty while enabled is a startup failure, logged
+# loudly, not a silent no-op.
+HUB_SNMP_ENABLED=false
+HUB_MGMT_IP=
+
+# Must match snmp-server community in the routers' config.
+HUB_SNMP_COMMUNITY=public
+
+# Seconds between poll rounds.
+HUB_SNMP_POLL_INTERVAL=60
+
+# Per-request timeout, in seconds.
+HUB_SNMP_TIMEOUT_S=3
+
+# Age-based retention for polled interface counters.
+HUB_SNMP_RETENTION_HOURS=24
 ENVEOF
 
 # -------------------------------------------------------------------
@@ -274,6 +306,31 @@ chmod +x /etc/init.d/lab-tester-hub
 cp -f "${SCRIPT_DIR}/services/firstboot.initd" /etc/init.d/lab-tester-hub-firstboot
 chmod +x /etc/init.d/lab-tester-hub-firstboot
 
+# -------------------------------------------------------------------
+# 9b. Config file server (lab-tester-serve)
+#
+# Originally designed in docs/HANDOFF.md, built here -- "config file server":
+# read-only router config files, served for a router to pull with
+# `copy http://`. publish-config (section 10 below) is the write side --
+# an operator-run helper, never the web server itself, which never writes.
+# -------------------------------------------------------------------
+log "Installing config file server (lab-tester-serve)"
+cp -f "${SCRIPT_DIR}/services/serve.initd" /etc/init.d/lab-tester-serve
+chmod +x /etc/init.d/lab-tester-serve
+cp -f "${SCRIPT_DIR}/services/serve.conf" /etc/lab-tester-serve.conf
+
+# OpenRC sources /etc/conf.d/<service-name> automatically -- these three
+# become plain shell variables inside serve.initd with no extra code needed.
+cat > /etc/conf.d/lab-tester-serve <<CONFDEOF
+# SERVE_BIND=0.0.0.0 listens on every address, per explicit lab requirement
+# -- unlike SNMP polling, which must go OUT the management NIC specifically,
+# this is routers pulling IN, and any router may not yet have its
+# management-VLAN interface configured when it needs to fetch a config.
+SERVE_BIND=0.0.0.0
+SERVE_PORT=8080
+SERVE_DIR=${SERVE_DIR}
+CONFDEOF
+
 # Invite an unconfigured hub to run hub-setup.sh at first interactive login,
 # where a real tty is guaranteed (unlike an OpenRC start()).
 cp -f "${SCRIPT_DIR}/services/login-setup.sh" /etc/profile.d/lab-tester-hub-setup.sh
@@ -293,6 +350,9 @@ rc-update add lab-tester-hub-firstboot default
 apk add --no-cache dropbear
 rc-update add dropbear default
 
+# Config file download server
+rc-update add lab-tester-serve default
+
 log "Services enabled"
 
 # -------------------------------------------------------------------
@@ -308,6 +368,8 @@ cat > /etc/motd <<'MOTDEOF'
   │  Config:    /opt/lab-tester-hub/hub.env       │
   │  DB:        /var/lib/lab-tester/hub.db        │
   │  Logs:      rc-service lab-tester-hub status  │
+  │  Configs:   http://<this-vm-ip>:8080/         │
+  │    publish-config <file>                      │
   │                                               │
   │  Not configured yet? Log in and run:          │
   │    hub-setup.sh                               │
@@ -362,12 +424,73 @@ SIPEOF
 chmod +x /usr/local/bin/set-static-ip
 
 # -------------------------------------------------------------------
+# 10b. Create publish-config helper script
+#
+# The write side of lab-tester-serve: copies a file into the served
+# directory, prints its URL and md5, and the exact router-side commands
+# from docs/HANDOFF.md's original design -- copy, verify /md5, reload in 5
+# as a safety net, then configure replace (never copy ... running-config,
+# which merges instead of replacing).
+# -------------------------------------------------------------------
+log "Creating publish-config helper script"
+cat > /usr/local/bin/publish-config <<'PUBEOF'
+#!/bin/sh
+# Publish a router config file for download via lab-tester-serve.
+# Usage: publish-config <local-file> [name-on-server]
+
+set -eu
+
+if [ $# -lt 1 ]; then
+    echo "Usage: publish-config <local-file> [name-on-server]"
+    exit 1
+fi
+
+SRC="$1"
+DEST_NAME="${2:-$(basename "$SRC")}"
+
+if [ ! -f "$SRC" ]; then
+    echo "publish-config: $SRC not found" >&2
+    exit 1
+fi
+
+_serve_dir=$(grep -m1 '^SERVE_DIR=' /etc/conf.d/lab-tester-serve 2>/dev/null | cut -d= -f2)
+_serve_dir="${_serve_dir:-/srv/lab-tester-configs}"
+_port=$(grep -m1 '^SERVE_PORT=' /etc/conf.d/lab-tester-serve 2>/dev/null | cut -d= -f2)
+_port="${_port:-8080}"
+_ip=$(ip -o -4 addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
+_ip="${_ip:-<hub-ip>}"
+
+mkdir -p "$_serve_dir"
+cp -f "$SRC" "$_serve_dir/$DEST_NAME"
+chmod 0444 "$_serve_dir/$DEST_NAME"
+
+_md5=$(md5sum "$_serve_dir/$DEST_NAME" | awk '{print $1}')
+
+echo "Published: $_serve_dir/$DEST_NAME"
+echo "URL:       http://${_ip}:${_port}/${DEST_NAME}"
+echo "MD5:       $_md5"
+echo
+echo "On the router:"
+echo "  copy http://${_ip}:${_port}/${DEST_NAME} flash:"
+echo "  verify /md5 flash:${DEST_NAME} $_md5"
+echo "  reload in 5"
+echo "  configure replace flash:${DEST_NAME}"
+echo "  reload cancel"
+PUBEOF
+
+chmod +x /usr/local/bin/publish-config
+
+# -------------------------------------------------------------------
 # 11. Clean up for template conversion
 # -------------------------------------------------------------------
 log "Cleaning up for template conversion"
 
 # Remove SSH host keys (regenerated on boot)
 rm -f /etc/dropbear/dropbear_*_host_key
+
+# Nothing should be published on the golden image itself -- publish-config
+# is an operator action taken after cloning.
+rm -f "$SERVE_DIR"/*
 
 # Clear machine-id
 : > /etc/machine-id 2>/dev/null || true

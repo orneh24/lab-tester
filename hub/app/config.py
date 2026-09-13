@@ -40,7 +40,30 @@ BUSY_TIMEOUT_MS = int(os.environ.get("HUB_BUSY_TIMEOUT_MS", "5000"))
 # "unknown" rather than failing the whole endpoint.
 HEALTH_SERVICES = [
     s.strip() for s in os.environ.get(
-        "HUB_HEALTH_SERVICES", "lab-tester-hub,chronyd,dropbear,open-vm-tools"
+        "HUB_HEALTH_SERVICES", "lab-tester-hub,chronyd,dropbear,open-vm-tools,lldpd"
     ).split(",") if s.strip()
 ]
 HEALTH_SERVICE_TIMEOUT_S = int(os.environ.get("HUB_HEALTH_SERVICE_TIMEOUT_S", "3"))
+
+# ---------------------------------------------------------------------------
+# SNMP polling (routers' interface counters)
+# ---------------------------------------------------------------------------
+# Opt-in, per explicit requirement — false means the poller thread must not
+# start at all, not a graceful degrade-to-no-op. See snmp_poller.start().
+SNMP_ENABLED = os.environ.get("HUB_SNMP_ENABLED", "false").lower() in ("true", "1", "yes")
+
+# The hub's address on the management NIC (docs/DEPLOYMENT.md's "hub NIC2"),
+# the one the routers' SNMP ACL is restricted to. Every outgoing SNMP packet
+# must be source-bound to this address specifically — never the data-plane
+# NIC the rest of the hub listens on. No default: if SNMP_ENABLED is true and
+# this is empty, snmp_poller.start() refuses to start and logs loudly, rather
+# than silently sourcing from whatever interface the OS route table picks.
+MGMT_IP = os.environ.get("HUB_MGMT_IP", "").strip()
+
+# Default community, used when a row in snmp_targets doesn't override it.
+SNMP_COMMUNITY = os.environ.get("HUB_SNMP_COMMUNITY", "public")
+SNMP_POLL_INTERVAL = int(os.environ.get("HUB_SNMP_POLL_INTERVAL", "60"))
+SNMP_TIMEOUT_S = int(os.environ.get("HUB_SNMP_TIMEOUT_S", "3"))
+# Mirrors RESULT_RETENTION_HOURS's default for consistency across the two
+# "the hub polls/receives and must eventually forget" tables.
+SNMP_RETENTION_HOURS = int(os.environ.get("HUB_SNMP_RETENTION_HOURS", "24"))

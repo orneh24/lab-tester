@@ -26,7 +26,7 @@ Test VMs are ~128 MB Alpine clones from one golden image. They get an IP by DHCP
 
 ## Config
 
-`/etc/lab-tester/config` (from `test-vm/config.sample`), sourced by both scripts: `HUB_URL` (no trailing slash), `ROUTER_NAME` and `SUBNET` — all three required — plus optional `ENABLE_IPERF`, `TRACEROUTE_INTERVAL`, `TRACEROUTE_MAX_HOPS`, `PMTU_SIZE`, `DNS_SERVER`, `DNS_QUERY`, `AGENT_AUTOUPDATE`.
+`/etc/lab-tester/config` (from `test-vm/config.sample`), sourced by both scripts: `HUB_URL` (no trailing slash), `ROUTER_NAME` and `SUBNET` — all three required — plus optional `ENABLE_IPERF`, `ENABLE_SMB`, `TRACEROUTE_INTERVAL`, `TRACEROUTE_MAX_HOPS`, `PMTU_SIZE`, `DNS_SERVER`, `DNS_QUERY`, `AGENT_AUTOUPDATE`.
 
 **`register.sh` requires all three of `HUB_URL`, `ROUTER_NAME` and `SUBNET`**, and `exit 1`s on the first one that is empty. Nothing is derived and nothing is defaulted. Per-clone values are therefore: hostname, `ROUTER_NAME`, `SUBNET` — normally supplied through guestinfo rather than edited by hand.
 
@@ -36,7 +36,7 @@ Be conservative about adding a fourth. Each required variable is another way for
 
 `register.sh` — boot + every 5 min. Detects hostname and the first global IPv4 (`ip -4 -o addr show scope global`), POSTs `/register`, retries 3× with 5 s backoff. Re-registration is what makes DHCP renewals invisible to the rest of the system; don't lengthen the interval past the lease's usable window.
 
-`test-cycle.sh` — every minute. Pulls `/endpoints`, validates JSON with `jq empty`, skips self by hostname, then per peer runs HTTP → SSH → PMTU, with traceroute only on `TRACEROUTE_INTERVAL` or right after an HTTP/SSH failure, and iperf3 when `ENABLE_IPERF=true`. Static targets from `/targets` run whichever tests each one declares. DNS runs once per cycle against `DNS_SERVER`, not per target — it is a per-source test, which is why the dashboard renders it in its own panel rather than as a matrix column. All results POST in one payload.
+`test-cycle.sh` — every minute. Pulls `/endpoints`, validates JSON with `jq empty`, skips self by hostname, then per peer runs HTTP → SSH → PMTU → loss (all four always on, no gate — loss is fping-based packet loss/jitter), with traceroute only on `TRACEROUTE_INTERVAL` or right after an HTTP/SSH failure, iperf3 when `ENABLE_IPERF=true`, and smb (fetching `probe.bin` via `smbclient`) when `ENABLE_SMB=true` — no contention retry, since `smbd` forks per connection. `loss`'s `success` is `true` on any reply at all; the loss percentage lives in `output`, not the success field — never treat nonzero loss as a failure, that's the signal this test exists to report. Static targets from `/targets` run whichever tests each one declares. DNS runs once per cycle against `DNS_SERVER`, not per target — it is a per-source test, which is why the dashboard renders it in its own panel rather than as a matrix column. All results POST in one payload.
 
 Each test function returns one JSON object and is isolated with `|| true` so a failure never aborts the cycle. Build JSON with `printf`, and escape any free text through `json_escape()` (`jq -Rs '.'`) — raw command output contains quotes and newlines that will corrupt the payload otherwise.
 
@@ -67,7 +67,9 @@ needs an access list before it will answer.
 
 ## Services
 
-Servers on each VM: dropbear (SSH), busybox httpd (`lab-tester-httpd.conf`), iperf3 (`iperf3.initd`). They exist so *other* VMs can test *this* one — a VM that fails only inbound tests usually has a service down, not a routing problem.
+Servers on each VM: dropbear (SSH), busybox httpd (`lab-tester-httpd.conf`), iperf3 (`iperf3.initd`), and smbd (`smbd.initd` → `lab-smbd`, opt-in via `ENABLE_SMB`). They exist so *other* VMs can test *this* one — a VM that fails only inbound tests usually has a service down, not a routing problem.
+
+`lldpd` also runs on every VM, always-on and not gated by any flag. It isn't part of the test harness — no result type, never in the matrix — it's there for `lldpcli show neighbors` when troubleshooting cabling or a wrong port-group assignment.
 
 ## Cron
 

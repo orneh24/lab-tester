@@ -116,6 +116,10 @@ Verify before moving on:
       script installs chrony and enables chronyd, and configures neither
 - [ ] `sysctl net.ipv4.ip_forward` returns 0 — Alpine's default, but nothing in
       the build asserts it, so check rather than assume
+- [ ] `rc-service lldpd status` — always-on, not gated; `lldpcli show
+      neighbors` should name the switch/router port on the other end
+- [ ] `rc-service lab-tester-serve status`, then `curl http://<hub-ip>:8080/`
+      returns a directory listing (empty until the first `publish-config`)
 
 > **The hub is not an NTP server.** `chronyd` runs to discipline the hub's own
 > clock, which is the mesh reference because the hub stamps every `received_at`.
@@ -123,10 +127,15 @@ Verify before moving on:
 > no `chrony.conf` shipped. Point the routers at real upstream NTP, not at the
 > hub — see stage 6.
 
-> **There is no config file server.** `lab-tester-serve`, `publish-config`,
-> `SERVE_BIND` and port 8080 appear in older drafts of this file and in
-> `BUILD_GUIDE`. None of them exist. `HANDOFF.md` lists them under "Designed but
-> NOT implemented".
+> **Config file download server.** `lab-tester-serve` (busybox httpd, read-only,
+> directory listing on) serves `/srv/lab-tester-configs/` on port 8080,
+> `SERVE_BIND=0.0.0.0` by default — every address, deliberately, since a
+> router pulling a config over `copy http://` may not have its management-VLAN
+> interface configured yet. `publish-config <file>` copies a file in and
+> prints the URL, MD5, and the exact router-side commands (`copy` →
+> `verify /md5` → `reload in 5` as a safety net → `configure replace`, never
+> `copy <url> running-config`, which merges instead of replacing). Configured
+> in `/etc/conf.d/lab-tester-serve` (`SERVE_BIND`, `SERVE_PORT`, `SERVE_DIR`).
 
 ---
 
@@ -140,7 +149,9 @@ Verify before moving on:
       absence
 - [ ] Run `setup.sh`. It does **not** configure chrony — test VMs sync to
       Alpine's default NTP pool, and nothing points them at the hub
-- [ ] Verify dropbear, httpd, iperf3 and crond are running; identity page renders
+- [ ] Verify dropbear, httpd, iperf3, crond and lldpd are running; identity
+      page renders. If `ENABLE_SMB=true`, verify `lab-smbd` is running too —
+      it is not started by default (lldpd, unlike smb, always is)
 - [ ] Confirm registration works against the live hub before sealing the image
 - [ ] Clean up (BUILD_GUIDE 7): clear machine-id, remove dropbear host keys,
       clear logs, zero free space
@@ -185,7 +196,14 @@ at the hub. The hub disciplines its own clock only.
 - [ ] `show ntp status` on each router reports synchronised
 - [ ] Router and hub clocks agree — compare `show clock` against the hub's
       `/api/time`. The ±5 min correlation windows are only as good as this
-- [ ] SNMP polling works from the hub: `snmpget -v2c -c <community> <router-mgmt-ip> sysUpTime.0`
+- [ ] SNMP polling works from the hub (`net-snmp` is deliberately not
+      installed — the hub's own client is what enforces the `HUB_MGMT_IP`
+      source-bind; a CLI `snmpget` here would prove nothing about that):
+      set `HUB_SNMP_ENABLED=true` and `HUB_MGMT_IP` in `hub.env`, restart,
+      then register the router and read it back —
+      `curl -X POST http://<hub-ip>/snmp/targets -d '{"name":"R1","mgmt_ip":"<router-mgmt-ip>"}'`
+      followed by `curl -s http://<hub-ip>/api/snmp?router=R1` should show
+      `status: "ok"` rows
 
 > A `logging host` or `ntp server` line missing `vrf MGMT` fails silently: the
 > router looks the hub up in the global table, finds nothing, and reports no
@@ -227,11 +245,12 @@ at the hub. The hub disciplines its own clock only.
 
 ## Routine operations
 
-- Pushing a router config from the hub is **not built** — `publish-config`,
-  `lab-tester-serve` and port 8080 do not exist. Use your normal transfer path.
-  Whatever you use, on the router go `verify /md5` → `reload in 5` →
-  `configure replace` → `reload cancel`, and **never**
-  `copy <url> running-config` — that merges.
+- Publishing a router config from the hub: `publish-config <file>` on the hub
+  copies it into `/srv/lab-tester-configs/` (served by `lab-tester-serve` on
+  port 8080, every address) and prints the URL, MD5, and the exact commands
+  to run. On the router: `copy http://<hub-ip>:8080/<file> flash:` →
+  `verify /md5` → `reload in 5` → `configure replace` → `reload cancel`, and
+  **never** `copy <url> running-config` — that merges.
 - Add a router: clone a test VM (stage 5), configure syslog/NTP (stage 6).
 - An amber row in the **Endpoints** list means a VM stopped registering
   (`last_seen` over 5 minutes). Its matrix cells go grey rather than amber.

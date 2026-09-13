@@ -79,6 +79,8 @@ else
     _subnet="${_gi_subnet:-${SUBNET:-}}"
     _hostname="${_gi_host:-${LAB_HOSTNAME:-}}"
     _enable_iperf="${ENABLE_IPERF:-false}"
+    # Environment-only, like ENABLE_IPERF — no guestinfo key for this.
+    _enable_smb="${ENABLE_SMB:-false}"
 
     # Optional tuning, also overridable from guestinfo so a whole lab can be
     # retuned at clone time without touching any VM's filesystem.
@@ -127,6 +129,10 @@ TRACEROUTE_MAX_HOPS=10
 PMTU_SIZE=${_pmtu_size}
 
 ENABLE_IPERF=${_enable_iperf}
+
+# Enable the SMB probe test (true/false). Costs smbd's resident memory on a
+# 128 MB VM plus up to ~8s per peer in the cycle budget.
+ENABLE_SMB=${_enable_smb}
 
 # DNS resolver to query; empty disables the DNS test.
 DNS_SERVER=${_dns_server}
@@ -255,7 +261,10 @@ if [ -d "${SRC_DIR}/../services" ]; then
     cp -f "${SRC_DIR}/../services/lab-tester-httpd.conf" /etc/httpd.conf 2>/dev/null || true
     cp -f "${SRC_DIR}/../services/iperf3.initd" /etc/init.d/iperf3 2>/dev/null || true
     cp -f "${SRC_DIR}/../services/httpd.initd"  /etc/init.d/lab-httpd 2>/dev/null || true
-    chmod +x /etc/init.d/iperf3 /etc/init.d/lab-httpd 2>/dev/null || true
+    mkdir -p /etc/samba 2>/dev/null || true
+    cp -f "${SRC_DIR}/../services/smb.conf"   /etc/samba/smb.conf 2>/dev/null || true
+    cp -f "${SRC_DIR}/../services/smbd.initd" /etc/init.d/lab-smbd 2>/dev/null || true
+    chmod +x /etc/init.d/iperf3 /etc/init.d/lab-httpd /etc/init.d/lab-smbd 2>/dev/null || true
 fi
 
 # -------------------------------------------------------------------
@@ -328,6 +337,15 @@ if [ "$ENABLE_IPERF" = "true" ]; then
     log "iperf3 server started"
 else
     log "iperf3 disabled (ENABLE_IPERF=$ENABLE_IPERF)"
+fi
+
+# Start lab-smbd (SMB probe server) if enabled
+if [ "${ENABLE_SMB:-false}" = "true" ]; then
+    rc-update add lab-smbd default 2>/dev/null || true
+    rc-service lab-smbd start 2>/dev/null || true
+    log "lab-smbd (SMB probe server) started"
+else
+    log "SMB disabled (ENABLE_SMB=${ENABLE_SMB:-false})"
 fi
 
 # -------------------------------------------------------------------

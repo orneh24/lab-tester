@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.app import app  # noqa: E402
 from app import config  # noqa: E402
 from app import syslog_server  # noqa: E402
+from app import snmp_poller  # noqa: E402
 
 
 def main():
@@ -29,6 +30,10 @@ def main():
     # bind — an unavailable syslog port must not stop the hub serving results,
     # which is the job that matters.
     syslog_server.start()
+    # Opt-in (HUB_SNMP_ENABLED, default false) and, unlike the syslog
+    # listener, a hard no-start rather than a graceful degrade if enabled
+    # without HUB_MGMT_IP — see snmp_poller.start()'s docstring.
+    snmp_poller.start()
 
     try:
         from waitress import serve

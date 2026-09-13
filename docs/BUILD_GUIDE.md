@@ -167,8 +167,14 @@ both failures are silent:
   probe needs its `-M do`, which BusyBox ping does not implement, so this is a
   package swap rather than a `PATH` question.
 
+A third package choice is not silent but is still worth getting right:
+`samba-server` and `samba-client`, never the `samba` metapackage. The
+metapackage pulls in winbind and the AD domain-controller machinery that this
+lab has no use for; `samba-server` alone does not depend on either.
+
 > CLAUDE.md constraint 14 has the full reasoning. `test-vm/build-template.sh`
-> checks the ping binary at build time and warns.
+> checks the ping binary — and, for SMB, that `smbclient`/`smbd` both run —
+> at build time and warns.
 
 ### 4.3 Hub-Only Packages (Python, Flask, waitress)
 
@@ -221,6 +227,8 @@ scp test-vm/scripts/test-cycle.sh  root@<VM_IP>:/usr/local/bin/lab-tester/
 scp test-vm/scripts/setup.sh       root@<VM_IP>:/usr/local/bin/lab-tester/
 scp test-vm/config.sample           root@<VM_IP>:/etc/lab-tester/config.sample
 scp test-vm/services/iperf3.initd  root@<VM_IP>:/etc/init.d/iperf3
+scp test-vm/services/smbd.initd    root@<VM_IP>:/etc/init.d/lab-smbd
+scp test-vm/services/smb.conf      root@<VM_IP>:/etc/samba/smb.conf
 scp test-vm/services/lab-tester-httpd.conf root@<VM_IP>:/etc/httpd.conf
 scp test-vm/services/crontab       root@<VM_IP>:/etc/lab-tester/crontab
 ```
@@ -254,6 +262,7 @@ SUBNET="10.1.1.0/24"
 ```sh
 chmod +x /usr/local/bin/lab-tester/*.sh
 chmod +x /etc/init.d/iperf3
+chmod +x /etc/init.d/lab-smbd
 /usr/local/bin/lab-tester/setup.sh
 ```
 
@@ -263,6 +272,11 @@ chmod +x /etc/init.d/iperf3
 rc-update add iperf3 default
 rc-update add crond default
 ```
+
+> `lab-smbd` is not enabled here. Like `iperf3` under `ENABLE_IPERF`,
+> `setup.sh` only `rc-update add`s it when `ENABLE_SMB=true` in the config —
+> `build-template.sh` installs the package and service file but leaves it
+> off by default (CLAUDE.md test-type section).
 
 > **Alpine quirk:** Alpine uses OpenRC, not systemd. Services are managed with `rc-service <name> start|stop|restart` and enabled at boot with `rc-update add <name> <runlevel>`. The `default` runlevel is equivalent to systemd's multi-user target.
 
@@ -315,6 +329,12 @@ curl -s http://localhost/
 
 # Test iperf3 is listening
 iperf3 -c 127.0.0.1 -t 1
+
+# If ENABLE_SMB=true, test smbd is listening
+smbclient -N //127.0.0.1/labshare -c 'get probe.bin /dev/null'
+
+# loss test (always on, no flag) -- confirm fping actually landed
+fping -c 3 127.0.0.1
 
 # Check cron is loaded
 crontab -l
@@ -795,6 +815,8 @@ tail -f /var/log/lab-tester/test-cycle.log
 | M | path-MTU probe, DF bit set | always |
 | D | DNS resolution | only when `DNS_SERVER` is set |
 | I | iperf3 throughput | only when `ENABLE_IPERF=true` |
+| B | SMB fetch of the probe file (`smbclient` against `lab-smbd`) | only when `ENABLE_SMB=true` |
+| L | Packet loss % / RTT jitter (`fping`) | always |
 
 **Why M matters.** Every other test uses small payloads, so a tunnel that
 carries small packets but drops large ones reads green right across the
@@ -831,9 +853,9 @@ curl -s http://<hub-ip>/targets | jq
 curl -X DELETE http://<hub-ip>/targets/R1-Lo0
 ```
 
-Valid test names are `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`; an
-unknown name is rejected with a 400 listing what it accepts. Test VMs pick up
-changes on their next cycle, within 60 seconds.
+Valid test names are `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`,
+`smb`, `loss`; an unknown name is rejected with a 400 listing what it
+accepts. Test VMs pick up changes on their next cycle, within 60 seconds.
 
 ### 8A.3 Updating the agent scripts
 
@@ -863,6 +885,58 @@ Pin a VM with `AGENT_AUTOUPDATE=false` in `/etc/lab-tester/config`.
 > results, add targets, or change the agent scripts every VM then executes.
 > That is acceptable on an isolated lab segment and nowhere else — do not
 > expose the hub to a shared or production network.
+
+### 8A.4 SNMP polling
+
+Opt-in (`HUB_SNMP_ENABLED=false` by default in `hub.env`). Requires the hub
+to have an address on the routers' Management VLAN — `HUB_MGMT_IP` — because
+every poll is source-bound to that address specifically; the routers' SNMP
+ACL (`docs/csr-baseline.cfg`) only answers it. Leaving `HUB_MGMT_IP` unset
+while `HUB_SNMP_ENABLED=true` is a startup failure, logged loudly, not a
+silent no-op.
+
+```sh
+# Enable (edit /opt/lab-tester-hub/hub.env, then restart)
+HUB_SNMP_ENABLED=true
+HUB_MGMT_IP=10.0.1.100      # the hub's address on the Management VLAN
+HUB_SNMP_COMMUNITY=public   # must match snmp-server community in csr-baseline.cfg
+rc-service lab-tester-hub restart
+
+# Register a router to poll
+curl -X POST http://<hub-ip>/snmp/targets -H 'Content-Type: application/json' \
+  -d '{"name":"R1","mgmt_ip":"10.0.1.1"}'
+
+# Read what it collected
+curl -s http://<hub-ip>/api/snmp?router=R1 | jq
+```
+
+Results render on the dashboard's "Router SNMP" panel — per-router `sysName`,
+poll status, and per-interface counters with nonzero errors/discards flagged.
+Not part of the pair matrix; this is router telemetry, not a VM test result.
+
+### 8A.5 Config file server
+
+Always on, unlike the tests above — `lab-tester-serve` (busybox httpd) serves
+`/srv/lab-tester-configs/` read-only on port 8080, bound to every address.
+Directory listing is automatic for any path with no `index.html`; never place
+one there.
+
+```sh
+# On the hub: publish a file
+publish-config /root/r1-new.cfg
+
+# Prints the URL, MD5, and the exact router-side commands. On the router:
+copy http://<hub-ip>:8080/r1-new.cfg flash:
+verify /md5 flash:r1-new.cfg <md5-from-publish-config>
+reload in 5
+configure replace flash:r1-new.cfg
+reload cancel
+```
+
+`reload in 5` and `reload cancel` are the safety net: if `configure replace`
+locks you out, the router reloads back to the last-saved config on its own.
+Never `copy <url> running-config` — that merges into the running config
+instead of replacing it, which defeats the point of a known-good template.
 
 ---
 
@@ -924,11 +998,13 @@ cat /etc/network/interfaces
 curl -s http://<remote-vm-ip>/
 ssh root@<remote-vm-ip> echo ok
 iperf3 -c <remote-vm-ip> -t 2
+smbclient -N //<remote-vm-ip>/labshare -c 'get probe.bin /dev/null'
+fping -c 5 <remote-vm-ip>
 traceroute <remote-vm-ip>
 ```
 
 **Common causes:**
-- Target VM's service is not running (iperf3, httpd, dropbear)
+- Target VM's service is not running (iperf3, httpd, dropbear, lab-smbd)
 - ACLs or firewall rules on the router blocking specific ports
 - SSH host key issues (dropbear regenerated keys but known_hosts has old key)
   ```sh

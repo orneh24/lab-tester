@@ -18,9 +18,9 @@ You are the diagnostic engineer for the lab-tester connectivity system. You sepa
 
 - Hub: Flask + SQLite behind waitress (`serve.py`), `/register`, `/endpoints`, `/results`, `/api/results?minutes=N`, `/api/results/<source>/<target>`, `/targets`, `/agent/manifest`, `/agent/<script>`. Also `/api/syslog`, `/api/syslog/sources`, `/syslog`, `/api/time` and `/api/health` — see Step 6. `/api/health` is the first-line check for whether the hub VM itself is healthy (services, syslog listener, load/memory/disk) before troubleshooting further. Not a test participant — it never appears in the matrix.
 - Test VMs: Alpine clones, DHCP, register on boot and every 5 min, test cycle every minute via cron. Logs in `/var/log/lab-tester/`.
-- Tests per pair: http, ssh, pmtu, iperf3 (optional), plus traceroute on `TRACEROUTE_INTERVAL` (default 300 s) **or on demand when HTTP/SSH to that target just failed**. DNS is per-source against a resolver, not per pair, and appears in its own dashboard panel.
+- Tests per pair: http, ssh, pmtu, loss (all always on), iperf3 (optional), smb (optional), plus traceroute on `TRACEROUTE_INTERVAL` (default 300 s) **or on demand when HTTP/SSH to that target just failed**. DNS is per-source against a resolver, not per pair, and appears in its own dashboard panel. `loss`'s `success` is `true` on any reply at all (not zero loss) — check `output` for the actual `%loss`, don't trust the success column alone.
 - Static targets (router loopbacks, outside addresses) run no agent. They appear as `target_hostname` values that are not registered endpoints — that is expected, not an anomaly.
-- Each VM also *serves* httpd (`lab-httpd`), dropbear, iperf3 so others can test it.
+- Each VM also *serves* httpd (`lab-httpd`), dropbear, iperf3, and — when `ENABLE_SMB=true` — smbd (`lab-smbd`) so others can test it.
 - `endpoints` is keyed on hostname. The hub stamps `received_at` on arrival and filters on that; the client's `timestamp` is recorded but does not affect windowing.
 
 ## Workflow
@@ -83,10 +83,12 @@ Clock skew is now a *reporting accuracy* problem rather than a data-loss one —
 A pair failing one way only indicts the *target*, not the path:
 
 ```sh
-nc -z <target-ip> 22 80 5201
+nc -z <target-ip> 22 80 445 5201
 ```
 
-Server down (dropbear/httpd/iperf3) explains inbound-only failure. If every pair crossing one router fails both ways, it is the router.
+Server down (dropbear/httpd/lab-smbd/iperf3) explains inbound-only failure. If every pair crossing one router fails both ways, it is the router.
+
+Before blaming the router for a whole-VM or whole-subnet failure, check cabling with `lldpcli show neighbors` on the VM — it is always-on (not gated like the test services) and names the switch/router port on the other end. A VM cloned onto the wrong vSwitch port group looks identical to a router misconfiguration until you check this: it registers, DHCP may even succeed on the wrong segment, and every test against it fails for a reason that has nothing to do with the router.
 
 ### Step 6: Router Check (only now)
 
@@ -128,7 +130,9 @@ show ip access-lists
 show logging | include denied
 ```
 
-ICMP passing while HTTP fails is almost always an ACL permitting icmp but not tcp eq www. iperf3 needs 5201/tcp both directions.
+ICMP passing while HTTP fails is almost always an ACL permitting icmp but not tcp eq www. iperf3 needs 5201/tcp both directions; smb needs 445/tcp both directions.
+
+If `HUB_SNMP_ENABLED=true`, check the dashboard's "Router SNMP" panel before concluding the router is clean — nonzero interface errors/discards on the hop named by traceroute are a physical/queueing problem syslog often won't mention at all. Absence of SNMP data for a router means it isn't in `snmp_targets`, or the poller can't reach it — not that the interface is healthy.
 
 ## Output Format
 

@@ -1,0 +1,39 @@
+#!/sbin/openrc-run
+# OpenRC init script for the lab-tester SMB probe server (Samba smbd).
+#
+# Named lab-smbd, not smbd/samba, for the same reason lab-httpd isn't named
+# httpd: this is our service definition, not Alpine's samba-server *-openrc
+# subpackage (which is deliberately not installed — see build-template.sh's
+# package notes). Only enabled by setup.sh when ENABLE_SMB=true; not added
+# to any runlevel at image build time.
+
+name="lab-smbd"
+description="lab-tester SMB probe server (Samba smbd)"
+
+command="/usr/sbin/smbd"
+command_args="-F"
+command_background="yes"
+pidfile="/run/smbd.pid"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    # smbd has no --pidfile flag of its own: it writes
+    # "<pid directory>/smbd.pid", where "pid directory" is set in smb.conf
+    # (services/smb.conf sets it to /run). That must agree with pidfile=
+    # above or OpenRC will never find the process to stop it.
+    checkpath --directory --mode 0755 /run
+}
+
+stop() {
+    if [ -f "${pidfile}" ]; then
+        kill "$(cat "${pidfile}")" 2>/dev/null
+        rm -f "${pidfile}"
+    else
+        # Fallback: kill by process name.
+        killall smbd 2>/dev/null
+    fi
+}

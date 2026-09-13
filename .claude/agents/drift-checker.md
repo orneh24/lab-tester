@@ -29,8 +29,9 @@ agent dir, hub port.
 
 **Service names.** Every `rc-service` / `rc-update` name in the docs must
 exist as a file in `test-vm/services/` or be created by a build script.
-Current set: `lab-httpd`, `iperf3`, `lab-tester-firstboot`, `lab-tester-hub`,
-plus stock `crond`, `dropbear`, `chronyd`, `open-vm-tools`.
+Current set: `lab-httpd`, `iperf3`, `lab-smbd`, `lab-tester-firstboot`,
+`lab-tester-hub`, `lab-tester-serve` (hub only), plus stock `crond`,
+`dropbear`, `chronyd`, `open-vm-tools`, `lldpd` (both roles, always-on).
 
 **Config keys — three-way.** Every key in `config.sample` should be written by
 `setup.sh` and read by something; every key `test-cycle.sh` or `register.sh`

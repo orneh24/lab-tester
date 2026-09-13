@@ -29,8 +29,9 @@ You develop the lab-tester hub: `hub/app/app.py` (Flask), SQLite storage, and `h
 - `GET /syslog` — the viewer page. A `from`/`to` pair pins it and disables auto-refresh.
 - `GET /api/time` — hub clock plus chrony tracking state. **Always 200**: every failure (no chronyc, daemon down, timeout, unparseable output) returns `chrony: null` with a `reason`, because the syslog header renders a failure as `clock: unavailable` and a 500 would blank it.
 - `GET /api/health` — hub self-health for the dashboard's "Hub Health" panel: OpenRC service status (`HUB_HEALTH_SERVICES`), syslog listener state, load average, memory, disk, uptime. Same never-500 discipline as `/api/time` — each check degrades independently rather than failing the endpoint.
+- `GET|POST /snmp/targets`, `DELETE /snmp/targets/<name>` — routers to poll; `GET /api/snmp?router=&minutes=`, `GET /api/snmp/sources` — polled interface counters. `hub/app/snmp_poller.py` is a third writer against `hub.db` (after results and syslog) — needs `busy_timeout` on its own connection too. `hub/app/snmp_client.py` is a hand-rolled stdlib SNMPv2c client, deliberately not `pysnmp`/net-snmp CLI tools, because every poll must source-bind to `HUB_MGMT_IP` and neither of those reliably supports that. Opt-in (`HUB_SNMP_ENABLED`, default false); the poller must refuse to start, loudly, if enabled with `HUB_MGMT_IP` unset.
 
-Test types: `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`.
+Test types: `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`, `smb`, `loss`. `loss` is fine-grained-timed (like `http`) — do not add it to `COARSE_TIMING`.
 
 Adding a route or an optional response field is safe. Renaming, retyping, or requiring a new request field is not.
 
@@ -103,7 +104,7 @@ HUB_DB_PATH=/tmp/v.db HUB_PORT=8099 nohup python3 serve.py >/tmp/hub.log 2>&1 &
 sleep 3 && curl -s -m5 http://127.0.0.1:8099/agent/manifest
 ```
 
-Then run `test-cycle.sh` for real. The dev container usually lacks `ip`, `ping`, `dig`, `ssh`, `traceroute` — shim them in `/usr/local/sbin` so the scripts run **unmodified**; never edit a script to make it testable. A `ping` shim that fails above a chosen payload size simulates an MTU clamp; an `ip` shim prints one `inet <addr>/24 scope global` line.
+Then run `test-cycle.sh` for real. The dev container usually lacks `ip`, `ping`, `dig`, `ssh`, `traceroute`, `smbclient`, `fping` — shim them in `/usr/local/sbin` so the scripts run **unmodified**; never edit a script to make it testable. A `ping` shim that fails above a chosen payload size simulates an MTU clamp; an `ip` shim prints one `inet <addr>/24 scope global` line; an `smbclient` shim printing a `getting file … (… KiloBytes/sec)` line simulates a successful SMB fetch; an `fping` shim printing `xmt/rcv/%loss = N/N/0%, min/avg/max = a/b/c` simulates a clean loss/jitter result.
 
 Capture the payload the script builds and validate it with Python:
 
