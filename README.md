@@ -4,17 +4,17 @@
 
 Network end-to-end connectivity testing for the "inside" interfaces of
 virtualized Cisco CSR1000v routers in an R&S lab. Goes beyond ICMP — validates
-real TCP connections (HTTP, SSH, SMB, iperf3), packet loss/jitter, path MTU,
-DNS resolution and traceroute, correlates failures against the routers' own
-syslog, polls their SNMP interface counters, and visualizes results on a web
-dashboard.
+real TCP connections (HTTP, SSH, SMB, SMTP, iperf3), packet loss/jitter, path
+MTU, DNS resolution and traceroute, correlates failures against the routers'
+own syslog, polls their SNMP interface counters, and visualizes results on a
+web dashboard.
 
 ![Dashboard with a synthetic 5-router mesh, one failing path selected, and its syslog correlation panel open](docs/img/dashboard-mock.jpg)
 
 *Mock data — a synthetic 5-router mesh seeded locally to exercise every panel,
 not a real lab. See [Running the hub locally](#running-the-hub-locally).
-Predates the `smb`/`B` column added below — screenshot regeneration is
-optional and out of scope for that change.*
+Predates the `smb`/`B` and `smtp`/`E` columns added below — screenshot
+regeneration is optional and out of scope for those changes.*
 
 ## What it tests
 
@@ -28,6 +28,7 @@ optional and out of scope for that change.*
 | iperf3 | I | every VM pair, when `ENABLE_IPERF=true` |
 | SMB | B | every VM pair, when `ENABLE_SMB=true` |
 | Loss/jitter | L | every VM pair, always on — packet loss % and RTT jitter via `fping` |
+| SMTP | E | every VM pair when `ENABLE_SMTP=true`, plus any static target declaring it (ungated) — catches ESMTP inspection that rewrites capability verbs in flight rather than blocking them |
 
 **Static targets** — router loopbacks, outside hosts — run no agent and are
 configured once on the hub, merged into every VM's cycle.

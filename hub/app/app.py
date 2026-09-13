@@ -352,7 +352,7 @@ def api_results_pair(source, target):
 # (a loopback answers traceroute and a PMTU probe but has no HTTP server).
 # ---------------------------------------------------------------------------
 
-VALID_TESTS = ("http", "ssh", "traceroute", "iperf3", "pmtu", "dns", "smb", "loss")
+VALID_TESTS = ("http", "ssh", "traceroute", "iperf3", "pmtu", "dns", "smb", "loss", "smtp")
 
 
 @app.route("/targets", methods=["GET"])

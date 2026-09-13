@@ -172,9 +172,19 @@ A third package choice is not silent but is still worth getting right:
 metapackage pulls in winbind and the AD domain-controller machinery that this
 lab has no use for; `samba-server` alone does not depend on either.
 
-> CLAUDE.md constraint 14 has the full reasoning. `test-vm/build-template.sh`
-> checks the ping binary — and, for SMB, that `smbclient`/`smbd` both run —
-> at build time and warns.
+A fourth: `opensmtpd`, never the `opensmtpd-openrc` subpackage. That
+subpackage's service is named bare `smtpd` — the same generic-name collision
+risk `httpd` was — and installing it would let an operator `rc-update add
+smtpd` by accident, bypassing `ENABLE_SMTP` and every safety guard in this
+project's own `smtpd.conf`. `test-vm/services/smtpd.initd` ships our own
+`lab-smtpd` service instead. `opensmtpd` also claims `/usr/sbin/sendmail`,
+which is harmless alone but a hard collision if `postfix`/`ssmtp`/`msmtp` are
+ever added.
+
+> CLAUDE.md constraints 14 and 21 have the full reasoning. `test-vm/build-template.sh`
+> checks the ping binary, that SMB's `smbclient`/`smbd` both run, and that
+> SMTP's `smtpd -n` parses our config **and that config contains no `relay`
+> action** — at build time, warning rather than aborting the build.
 
 ### 4.3 Hub-Only Packages (Python, Flask, waitress)
 
@@ -229,6 +239,8 @@ scp test-vm/config.sample           root@<VM_IP>:/etc/lab-tester/config.sample
 scp test-vm/services/iperf3.initd  root@<VM_IP>:/etc/init.d/iperf3
 scp test-vm/services/smbd.initd    root@<VM_IP>:/etc/init.d/lab-smbd
 scp test-vm/services/smb.conf      root@<VM_IP>:/etc/samba/smb.conf
+scp test-vm/services/smtpd.initd   root@<VM_IP>:/etc/init.d/lab-smtpd
+scp test-vm/services/smtpd.conf    root@<VM_IP>:/etc/smtpd/smtpd.conf
 scp test-vm/services/lab-tester-httpd.conf root@<VM_IP>:/etc/httpd.conf
 scp test-vm/services/crontab       root@<VM_IP>:/etc/lab-tester/crontab
 ```
@@ -263,6 +275,7 @@ SUBNET="10.1.1.0/24"
 chmod +x /usr/local/bin/lab-tester/*.sh
 chmod +x /etc/init.d/iperf3
 chmod +x /etc/init.d/lab-smbd
+chmod +x /etc/init.d/lab-smtpd
 /usr/local/bin/lab-tester/setup.sh
 ```
 
@@ -273,10 +286,11 @@ rc-update add iperf3 default
 rc-update add crond default
 ```
 
-> `lab-smbd` is not enabled here. Like `iperf3` under `ENABLE_IPERF`,
-> `setup.sh` only `rc-update add`s it when `ENABLE_SMB=true` in the config —
-> `build-template.sh` installs the package and service file but leaves it
-> off by default (CLAUDE.md test-type section).
+> `lab-smbd` and `lab-smtpd` are not enabled here. Like `iperf3` under
+> `ENABLE_IPERF`, `setup.sh` only `rc-update add`s each when its
+> `ENABLE_SMB`/`ENABLE_SMTP` flag is `true` in the config — `build-template.sh`
+> installs the packages and service files but leaves both off by default
+> (CLAUDE.md test-type section).
 
 > **Alpine quirk:** Alpine uses OpenRC, not systemd. Services are managed with `rc-service <name> start|stop|restart` and enabled at boot with `rc-update add <name> <runlevel>`. The `default` runlevel is equivalent to systemd's multi-user target.
 
@@ -335,6 +349,11 @@ smbclient -N //127.0.0.1/labshare -c 'get probe.bin /dev/null'
 
 # loss test (always on, no flag) -- confirm fping actually landed
 fping -c 3 127.0.0.1
+
+# If ENABLE_SMTP=true, test smtpd is listening and safe
+smtpd -n -f /etc/smtpd/smtpd.conf     # config parses
+grep -n relay /etc/smtpd/smtpd.conf   # must be comments only
+printf 'EHLO test\r\nQUIT\r\n' | nc -w 3 127.0.0.1 25
 
 # Check cron is loaded
 crontab -l
@@ -817,6 +836,18 @@ tail -f /var/log/lab-tester/test-cycle.log
 | I | iperf3 throughput | only when `ENABLE_IPERF=true` |
 | B | SMB fetch of the probe file (`smbclient` against `lab-smbd`) | only when `ENABLE_SMB=true` |
 | L | Packet loss % / RTT jitter (`fping`) | always |
+| E | SMTP envelope conversation (`EHLO`/`MAIL`/`RCPT`/`RSET`, never `DATA`) against `lab-smtpd` | mesh: only when `ENABLE_SMTP=true`; static targets: always |
+
+**Why E matters.** Every other gated test either works or doesn't; SMTP is
+the one that catches a device *passing* traffic while *rewriting* it. Cisco's
+ESMTP inspection / ASA ESMTP fixup masks unrecognised capability verbs (e.g.
+`STARTTLS`) with runs of `X`, so `250-XXXXXXXX` in the recorded `output`
+means an ALG is editing the session in flight — nothing else in this matrix
+would ever notice. `success` gates on the banner + `EHLO` response only, not
+on `RCPT`: a real, correctly-configured relay rejects
+`RCPT TO:<probe@lab.invalid>` with `550`, which must not paint it red. The
+conversation never issues `DATA` and the server has no `relay` action — see
+CLAUDE.md constraint 21.
 
 **Why M matters.** Every other test uses small payloads, so a tunnel that
 carries small packets but drops large ones reads green right across the
@@ -854,7 +885,7 @@ curl -X DELETE http://<hub-ip>/targets/R1-Lo0
 ```
 
 Valid test names are `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`,
-`smb`, `loss`; an unknown name is rejected with a 400 listing what it
+`smb`, `loss`, `smtp`; an unknown name is rejected with a 400 listing what it
 accepts. Test VMs pick up changes on their next cycle, within 60 seconds.
 
 ### 8A.3 Updating the agent scripts
@@ -1000,11 +1031,12 @@ ssh root@<remote-vm-ip> echo ok
 iperf3 -c <remote-vm-ip> -t 2
 smbclient -N //<remote-vm-ip>/labshare -c 'get probe.bin /dev/null'
 fping -c 5 <remote-vm-ip>
+printf 'EHLO test\r\nQUIT\r\n' | nc -w 3 <remote-vm-ip> 25
 traceroute <remote-vm-ip>
 ```
 
 **Common causes:**
-- Target VM's service is not running (iperf3, httpd, dropbear, lab-smbd)
+- Target VM's service is not running (iperf3, httpd, dropbear, lab-smbd, lab-smtpd)
 - ACLs or firewall rules on the router blocking specific ports
 - SSH host key issues (dropbear regenerated keys but known_hosts has old key)
   ```sh

@@ -77,7 +77,8 @@ apk add --no-cache \
     fping \
     samba-server \
     samba-client \
-    lldpd
+    lldpd \
+    opensmtpd
 
 log "Packages installed"
 
@@ -110,6 +111,30 @@ log "Packages installed"
 #                      like the entries above — a client-only ICMP tool with
 #                      nothing else on the image at that path. run_loss_test()
 #                      drives it for the always-on loss/jitter probe.
+#   opensmtpd        — verified against the Alpine index: community repo,
+#                      v3.20 branch shows 7.5.0_p0-r0, ~325 KiB download /
+#                      ~820 KiB installed. depends="!postfix ca-certificates",
+#                      so there is no ambiguity with another MTA — apk would
+#                      refuse to have both installed. No metapackage trap
+#                      (opensmtpd is the base package here, unlike samba).
+#                      It also provides /usr/sbin/sendmail, mailq,
+#                      newaliases, makemap and smtpctl (the first three are
+#                      symlinks to smtpctl) — harmless today since nothing
+#                      else on this image uses the sendmail-compatible
+#                      interface, but a future collision risk if postfix,
+#                      ssmtp or msmtp is ever added; the !postfix depend
+#                      would catch that one, the others wouldn't.
+#                      Deliberately NOT installing opensmtpd-openrc: its init
+#                      script installs as the bare /etc/init.d/smtpd (verified
+#                      against the installed package), the same generic-name
+#                      collision risk this project already avoided with
+#                      lab-httpd (not httpd). It would let an operator
+#                      `rc-update add smtpd` by accident, bypassing
+#                      ENABLE_SMTP and every guard smtpd.conf writes in. This
+#                      project ships its own service/smtpd.initd instead,
+#                      installed as lab-smtpd — see that file's header.
+#                      run_smtp_test() drives smtpd for the SMTP ESMTP-
+#                      capability-masking probe.
 
 # Verify the ping we need actually landed; a BusyBox ping here means the PMTU
 # test will fail everywhere with a confusing "invalid option" rather than a
@@ -212,6 +237,11 @@ dd if=/dev/zero of=/srv/lab-tester-smb/probe.bin bs=1M count=8 2>/dev/null
 chmod 0444 /srv/lab-tester-smb/probe.bin
 chmod 0555 /srv/lab-tester-smb
 
+# No equivalent probe-payload step for SMTP: unlike SMB's fixed 8 MB
+# probe.bin, run_smtp_test() carries no payload at all (it never issues
+# DATA), so there is nothing here for it to create. Absence is deliberate,
+# not a missed step.
+
 # -------------------------------------------------------------------
 # 4. Install scripts
 # -------------------------------------------------------------------
@@ -260,12 +290,60 @@ cp -f "${SCRIPT_DIR}/services/smb.conf" /etc/samba/smb.conf
 cp -f "${SCRIPT_DIR}/services/smbd.initd" /etc/init.d/lab-smbd
 chmod +x /etc/init.d/lab-smbd
 
+# OpenSMTPD (SMTP probe server). This cp deliberately REPLACES the packaged
+# default /etc/smtpd/smtpd.conf, which (verified against the installed
+# opensmtpd package) ships a working `action "relay" relay` — an open relay
+# for anything originated on the box. See smtpd.conf's own header for why
+# that matters given this lab's NAT + default route to the internet. Like
+# lab-smbd, lab-smtpd is installed but deliberately NOT rc-update'd here —
+# it only starts when a clone's config sets ENABLE_SMTP=true, enforced by
+# setup.sh at boot time.
+mkdir -p /etc/smtpd
+cp -f "${SCRIPT_DIR}/services/smtpd.conf" /etc/smtpd/smtpd.conf
+cp -f "${SCRIPT_DIR}/services/smtpd.initd" /etc/init.d/lab-smtpd
+chmod +x /etc/init.d/lab-smtpd
+
 # Log rotation — test-cycle.sh appends traceroute output every 60 seconds.
 mkdir -p /etc/logrotate.d
 cp -f "${SCRIPT_DIR}/services/logrotate.conf" /etc/logrotate.d/lab-tester
 
 # crontab (installed but not activated until setup.sh runs)
 cp -f "${SCRIPT_DIR}/services/crontab" "$CONFIG_DIR/crontab"
+
+# -------------------------------------------------------------------
+# 6b. Validate OUR smtpd.conf, not the packaged default.
+#
+# This has to run after the cp -f above, not alongside the ping/smb/fping
+# presence checks earlier — those check that a package landed correctly;
+# this checks that OUR config file (the one that removes the relay action)
+# is actually what's on disk and that smtpd accepts it. Same warn-don't-fail
+# discipline as the rest of this script: a directive that doesn't parse on
+# whatever OpenSMTPD version this build pulled in should degrade to a loud
+# warning, never a broken image build.
+# -------------------------------------------------------------------
+log "Validating installed smtpd.conf"
+
+if ! /usr/sbin/smtpd -n -f /etc/smtpd/smtpd.conf >/dev/null 2>&1; then
+    log "WARNING: /etc/smtpd/smtpd.conf failed to parse (smtpd -n) — SMTP"
+    log "         tests will not work until this is fixed. Check the"
+    log "         resource-cap and match/action directive names against"
+    log "         'man smtpd.conf' for the OpenSMTPD version installed."
+fi
+
+if ! command -v nc >/dev/null 2>&1; then
+    log "WARNING: nc missing — run_smtp_test() has no client, SMTP tests"
+    log "         will not work (nc should come from busybox-extras)"
+fi
+
+# Safety net for a failed cp above: if this ever matches, the installed
+# config has a relay action and this build must not ship. The one action
+# this file is allowed to have is the "sink" mda action, which is not a
+# relay — this specifically looks for a relay delivery method.
+if grep -qE '^[[:space:]]*action[[:space:]]+.*[[:space:]]relay' /etc/smtpd/smtpd.conf; then
+    log "WARNING: /etc/smtpd/smtpd.conf contains a 'relay' action —"
+    log "         this build would ship with a working outbound relay."
+    log "         Check that the cp -f of services/smtpd.conf actually ran."
+fi
 
 # -------------------------------------------------------------------
 # 7. Create placeholder identity page
@@ -341,6 +419,12 @@ rm -f /etc/dropbear/dropbear_*_host_key
 # directory and probe.bin must survive cloning, so only /var/lib/samba/ is
 # touched here.
 rm -rf /var/lib/samba/*
+
+# Clear OpenSMTPD's queue contents only — never touch the directory tree's
+# ownership or mode. smtpd refuses to start on wrong queue permissions, and
+# that failure would only ever surface on a clone, which is miserable to
+# diagnose with no console session watching first boot.
+find /var/spool/smtpd/queue -mindepth 1 -delete 2>/dev/null || true
 
 # Remove any config left from build-time testing so clones start clean and
 # setup.sh actually runs its configuration path. The first-boot stamp must

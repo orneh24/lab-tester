@@ -1,7 +1,7 @@
 # Lab Tester — Network End-to-End Connectivity Testing
 
 ## Project Overview
-A lightweight system for testing end-to-end connectivity between hosts on the "inside" interfaces of virtualized Cisco CSR1000v routers in a R&S lab. Goes beyond ICMP — validates real TCP connections (HTTP, SSH, SMB, iperf3), packet loss/jitter, path MTU, DNS resolution and traceroute, polls the routers' own SNMP counters, and visualizes results on a web dashboard.
+A lightweight system for testing end-to-end connectivity between hosts on the "inside" interfaces of virtualized Cisco CSR1000v routers in a R&S lab. Goes beyond ICMP — validates real TCP connections (HTTP, SSH, SMB, SMTP, iperf3), packet loss/jitter, path MTU, DNS resolution and traceroute, polls the routers' own SNMP counters, and visualizes results on a web dashboard.
 
 ## Architecture
 
@@ -54,11 +54,12 @@ Diagram: `docs/TOPOLOGY.md`.
     interface counters, for the "Router SNMP" dashboard panel
 
 ### Test types
-`http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`, `smb`, `loss`. The
-dashboard labels them H / S / T / M / D / I / B / L. `dns` only runs when
-`DNS_SERVER` is set; `iperf3` only when `ENABLE_IPERF=true`; `smb` only when
-`ENABLE_SMB=true`. `loss` is full mesh and always on, like http/ssh/pmtu —
-no gate.
+`http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`, `smb`, `loss`, `smtp`.
+The dashboard labels them H / S / T / M / D / I / B / L / E. `dns` only runs
+when `DNS_SERVER` is set; `iperf3` only when `ENABLE_IPERF=true`; `smb` only
+when `ENABLE_SMB=true`; `smtp`'s mesh side only when `ENABLE_SMTP=true` (its
+static-target arm runs ungated — see below). `loss` is full mesh and always
+on, like http/ssh/pmtu — no gate.
 
 `loss` (fping-based packet loss/jitter) is fine-grained-timed like `http`,
 **not** coarse like the `date +%s`-timed tests — it is deliberately excluded
@@ -68,6 +69,22 @@ data carried in `output`, not a pass/fail gate — some loss is the normal,
 real signal this test exists to surface, and treating any nonzero loss as a
 hard failure would defeat that (same philosophy `pmtu` already uses for a
 partial/bracketed result).
+
+`smtp` catches what `smb` can't: a device that **passes** traffic while
+**rewriting** it. Cisco's ESMTP inspection / ASA ESMTP fixup masks
+unrecognised capability verbs (e.g. `STARTTLS`) with runs of `X`, so
+`250-XXXXXXXX` in the recorded `output` means an ALG is editing the session
+in flight, not blocking it. The probe never issues `DATA` — it holds a real
+envelope conversation (`EHLO` → `MAIL FROM:<>` → `RCPT TO:<probe@lab.invalid>`
+→ `RSET` → `QUIT`) and aborts before any message exists. `success` gates on
+the banner + `EHLO` response only, never on `RCPT`: a real relay correctly
+rejects `RCPT TO:<probe@lab.invalid>` with `550`, and that must not paint a
+healthy relay red — the response codes are data in `output`, same philosophy
+as `loss`/`pmtu`. The static-target arm is deliberately **ungated** (unlike
+`smb`'s): registering a target is already an explicit opt-in, and the client
+side cannot send mail regardless of `ENABLE_SMTP`, so requiring a local mail
+daemon just to probe a real external relay would be pure friction. See
+constraint 21 for why this can never become an open relay.
 
 `smb` is SMB-shaped rather than ICMP-shaped on purpose: it is the protocol
 most likely to be broken by an inspection policy, an MSS/MTU problem
@@ -219,8 +236,10 @@ with `AGENT_AUTOUPDATE=false`.
 - Alpine Linux VM, ~128 MB RAM, DHCP on the router's inside interface
 - Installed to `/usr/local/bin/lab-tester/`, config at `/etc/lab-tester/config`
 - Servers: dropbear (SSH), busybox httpd via OpenRC service **`lab-httpd`**,
-  iperf3, `smbd` via OpenRC service **`lab-smbd`** (opt-in, `ENABLE_SMB`)
-- Clients: curl, ssh, traceroute, iperf3, smbclient, fping — driven by cron every 60s
+  iperf3, `smbd` via OpenRC service **`lab-smbd`** (opt-in, `ENABLE_SMB`),
+  `smtpd` (OpenSMTPD) via OpenRC service **`lab-smtpd`** (opt-in, `ENABLE_SMTP`)
+- Clients: curl, ssh, traceroute, iperf3, smbclient, fping, `nc` (hand-rolled
+  SMTP conversation — see below) — driven by cron every 60s
 - Cloned from a single golden template
 
 ### Discovery
@@ -294,7 +313,8 @@ test-vm/
   build-template.sh   — builds the test-vm golden template
   scripts/            — register.sh, test-cycle.sh, setup.sh
   services/           — httpd.initd (lab-httpd), iperf3.initd,
-                        smbd.initd (lab-smbd), smb.conf, crontab,
+                        smbd.initd (lab-smbd), smb.conf,
+                        smtpd.initd (lab-smtpd), smtpd.conf, crontab,
                         lab-tester-httpd.conf, logrotate.conf,
                         firstboot.initd (lab-tester-firstboot)
   config.sample
@@ -391,6 +411,13 @@ These were live bugs that a review caught; each has a comment at the site.
      metapackage drags in winbind and the AD domain-controller machinery;
      `samba-server` depends on neither (`samba-dc` depends on it, not the
      reverse). Same failure mode as `iputils` above, in a new package.
+   - `opensmtpd`, never the `opensmtpd-openrc` subpackage. That subpackage's
+     service name is bare `smtpd` — as generic and collision-prone as
+     `httpd` was — and would let an operator `rc-update add smtpd` by
+     accident, bypassing `ENABLE_SMTP` and every safety guard in our own
+     `smtpd.conf`. We ship our own `lab-smtpd` initd instead. `opensmtpd`
+     also claims `/usr/sbin/sendmail`/`mailq`/`newaliases`; harmless alone,
+     but a hard collision if `postfix`/`ssmtp`/`msmtp` are ever added later.
 15. **Agent definitions use `tools:` as a comma-separated string**, not a
    YAML array — `tools: Read, Grep, Bash`. Per the Claude Code subagent
    docs; only `name` and `description` are required. Project-level
@@ -429,3 +456,15 @@ These were live bugs that a review caught; each has a comment at the site.
    databases — a log with silent holes, which is worse than a listener that
    refuses to start. Leaving it off makes the second bind fail with
    `EADDRINUSE`, which is what `start()` is written to expect.
+21. **The SMTP probe server must never be able to send mail.** No `relay`
+   action anywhere in `smtpd.conf`, no `match ... for any` — these are
+   structural guarantees the daemon has no configured path off the host, not
+   policy settings. The Alpine package's default config *does* ship a relay
+   action, so the `cp -f` that installs our own config in
+   `build-template.sh` is load-bearing; a build-time `grep` for a `relay`
+   action is the safety net if that copy ever silently fails. This isn't
+   theoretical: `docs/csr-example-r1.cfg` configures NAT overload plus a
+   default route to an internet gateway, so a test VM genuinely has a path
+   off the lab — "it's an isolated lab" is not a valid defence for this one.
+   The probe client never issues `DATA` either, so even a real external
+   relay registered as a static target can't have mail sent through it.

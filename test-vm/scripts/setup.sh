@@ -81,6 +81,8 @@ else
     _enable_iperf="${ENABLE_IPERF:-false}"
     # Environment-only, like ENABLE_IPERF — no guestinfo key for this.
     _enable_smb="${ENABLE_SMB:-false}"
+    # Environment-only, like ENABLE_SMB — no guestinfo key for this either.
+    _enable_smtp="${ENABLE_SMTP:-false}"
 
     # Optional tuning, also overridable from guestinfo so a whole lab can be
     # retuned at clone time without touching any VM's filesystem.
@@ -133,6 +135,12 @@ ENABLE_IPERF=${_enable_iperf}
 # Enable the SMB probe test (true/false). Costs smbd's resident memory on a
 # 128 MB VM plus up to ~8s per peer in the cycle budget.
 ENABLE_SMB=${_enable_smb}
+
+# Enable the SMTP probe test (true/false). Costs OpenSMTPD's resident memory
+# (multi-process: parent/lka/queue/scheduler/dispatcher/control/ca) on a
+# 128 MB VM plus ~3s typical / up to 10s worst-case per peer in the cycle
+# budget. Never issues DATA — see config.sample for the full safety note.
+ENABLE_SMTP=${_enable_smtp}
 
 # DNS resolver to query; empty disables the DNS test.
 DNS_SERVER=${_dns_server}
@@ -264,7 +272,10 @@ if [ -d "${SRC_DIR}/../services" ]; then
     mkdir -p /etc/samba 2>/dev/null || true
     cp -f "${SRC_DIR}/../services/smb.conf"   /etc/samba/smb.conf 2>/dev/null || true
     cp -f "${SRC_DIR}/../services/smbd.initd" /etc/init.d/lab-smbd 2>/dev/null || true
-    chmod +x /etc/init.d/iperf3 /etc/init.d/lab-httpd /etc/init.d/lab-smbd 2>/dev/null || true
+    mkdir -p /etc/smtpd 2>/dev/null || true
+    cp -f "${SRC_DIR}/../services/smtpd.conf"  /etc/smtpd/smtpd.conf 2>/dev/null || true
+    cp -f "${SRC_DIR}/../services/smtpd.initd" /etc/init.d/lab-smtpd 2>/dev/null || true
+    chmod +x /etc/init.d/iperf3 /etc/init.d/lab-httpd /etc/init.d/lab-smbd /etc/init.d/lab-smtpd 2>/dev/null || true
 fi
 
 # -------------------------------------------------------------------
@@ -346,6 +357,15 @@ if [ "${ENABLE_SMB:-false}" = "true" ]; then
     log "lab-smbd (SMB probe server) started"
 else
     log "SMB disabled (ENABLE_SMB=${ENABLE_SMB:-false})"
+fi
+
+# Start lab-smtpd (SMTP probe server) if enabled
+if [ "${ENABLE_SMTP:-false}" = "true" ]; then
+    rc-update add lab-smtpd default 2>/dev/null || true
+    rc-service lab-smtpd start 2>/dev/null || true
+    log "lab-smtpd (SMTP probe server) started"
+else
+    log "SMTP disabled (ENABLE_SMTP=${ENABLE_SMTP:-false})"
 fi
 
 # -------------------------------------------------------------------

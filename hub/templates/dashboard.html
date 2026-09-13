@@ -683,22 +683,25 @@ a:hover { text-decoration: underline; }
     // DNS is deliberately absent: it is one test per source against a
     // resolver, so it could only ever render as a permanently grey column.
     // It gets its own panel instead.
-    var PAIR_TEST_TYPES = ["http", "ssh", "traceroute", "pmtu", "smb", "iperf3", "loss"];
+    var PAIR_TEST_TYPES = ["http", "ssh", "traceroute", "pmtu", "smb", "smtp", "iperf3", "loss"];
     var TYPE_LABELS = {
         http: "H", ssh: "S", traceroute: "T",
         pmtu: "M",          // path MTU — catches a tunnel that passes small
                             // packets while large transfers hang
-        dns: "D", smb: "B", iperf3: "I", loss: "L"
+        dns: "D", smb: "B", iperf3: "I", loss: "L",
+        smtp: "E"           // ESMTP/email — S/M/T all taken; not X, since a
+                            // masked capability list renders as literal Xs
     };
     var TYPE_NAMES = {
         http: "HTTP", ssh: "SSH", traceroute: "Trace",
-        pmtu: "PMTU", dns: "DNS", smb: "SMB", iperf3: "iperf", loss: "Loss"
+        pmtu: "PMTU", dns: "DNS", smb: "SMB", iperf3: "iperf", loss: "Loss",
+        smtp: "SMTP"
     };
     // Whole-second granularity: reporting "0.0 ms" for these implies a
     // precision the measurement does not have. loss is deliberately absent:
     // fping reports a real decimal-ms average, not a date +%s whole-second
     // delta, so it behaves like http for timing purposes.
-    var COARSE_TIMING = {ssh: 1, traceroute: 1, pmtu: 1, dns: 1, smb: 1, iperf3: 1};
+    var COARSE_TIMING = {ssh: 1, traceroute: 1, pmtu: 1, dns: 1, smb: 1, iperf3: 1, smtp: 1};
 
     var endpoints = [];
     var targets = [];
@@ -1104,8 +1107,8 @@ a:hover { text-decoration: underline; }
         }
         // Before any results arrive, show the standard set rather than
         // nothing. loss is always-on/full-mesh like http/ssh/traceroute/pmtu
-        // (unlike smb/iperf3, which are gated/off by default), so it belongs
-        // in this fallback set on the same reasoning.
+        // (unlike smb/smtp/iperf3, which are gated/off by default), so it
+        // belongs in this fallback set on the same reasoning.
         return out.length ? out : ["http", "ssh", "traceroute", "pmtu", "loss"];
     }
 
@@ -1482,7 +1485,7 @@ a:hover { text-decoration: underline; }
         if (!ip) return;
         var tests = prompt(
             "Tests to run against " + name + ", comma separated.\n" +
-            "Valid: http, ssh, traceroute, pmtu, dns, smb, iperf3, loss\n\n" +
+            "Valid: http, ssh, traceroute, pmtu, dns, smb, smtp, iperf3, loss\n\n" +
             "A router loopback typically answers traceroute and pmtu but has no HTTP server.",
             "traceroute,pmtu");
         if (!tests) return;

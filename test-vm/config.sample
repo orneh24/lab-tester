@@ -85,6 +85,36 @@ ENABLE_IPERF=false
 # (the outer `timeout 15` in run_smb_test, fetching an 8 MB probe file).
 ENABLE_SMB=false
 
+# Enable the SMTP probe test (true/false). Every test VM runs an OpenSMTPD
+# server (lab-smtpd), and every peer holds a lightweight conversation
+# against it: banner -> EHLO -> MAIL FROM -> RCPT TO -> RSET -> QUIT. It
+# catches Cisco ESMTP inspection / ASA ESMTP fixup masking unrecognised
+# capability verbs (e.g. STARTTLS) with runs of X — a device that PASSES
+# SMTP while silently rewriting it, which nothing else here would notice.
+#
+# Safety: the probe never issues DATA — it aborts the transaction with RSET
+# right after the envelope. lab-smtpd's own config has no relay action, so
+# even a real client that completed DATA against it could not have that
+# message forwarded anywhere. This cannot send mail, including against a
+# real external relay registered as a static target (that arm is
+# intentionally ungated — see test-cycle.sh's static-target case).
+#
+# Costs on a 128 MB VM: OpenSMTPD is multi-process (parent, lka, queue,
+# scheduler, dispatcher, control, ca — roughly 7 privileged-separation
+# processes versus smbd's fork-per-connection model), so measure its
+# resident memory alongside ENABLE_SMB if both are enabled on the same VM.
+# Typical cost is ~3s per peer in the cycle budget (two deliberate 1s pauses
+# plus connection/round-trip time), up to ~10s worst case (SMTP_TIMEOUT).
+ENABLE_SMTP=false
+
+# SMTP probe tuning — defaults are inline in run_smtp_test(); uncomment to
+# override.
+#SMTP_PORT=25
+#SMTP_HELO=
+#SMTP_MAIL_FROM=
+#SMTP_RCPT=probe@lab.invalid
+#SMTP_TIMEOUT=10
+
 # Loss/jitter probe (fping) tuning — always on, no ENABLE_* flag. Defaults
 # are inline in run_loss_test(); uncomment to override. Fewer/shorter probes
 # reduce per-peer cycle cost at the price of loss-percentage resolution

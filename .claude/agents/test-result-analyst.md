@@ -43,8 +43,11 @@ Sample count, first and last `received_at`, distinct sources and targets.
 - `dns` — one per source per cycle, only where `DNS_SERVER` is configured. Absent entirely is normal.
 - `iperf3` — only where `ENABLE_IPERF=true`, and individual runs are skipped on server contention rather than recorded as failures.
 - `smb` — only where `ENABLE_SMB=true`, about one per minute per pair like `http`/`ssh`/`pmtu`. Unlike iperf3 there is no contention skip — `smbd` forks per connection, so a missing sample means the fetch failed or timed out, not that the server was busy.
+- `smtp` — mesh side only where `ENABLE_SMTP=true`, about one per minute per pair; no contention skip, same reasoning as `smb`. The static-target arm is ungated, so `smtp` rows against a static target can appear even with `ENABLE_SMTP=false`.
 
 **`loss`'s `success` field is not what it looks like.** It is `true` whenever at least one probe got a reply — a pair with 40% loss every cycle still shows a 100% `loss` success rate, because loss data lives in `output` (the `%loss` text), not in `success`. Do not report a pair as "healthy" on `loss` without parsing `output`; a 100% success rate here proves only "never fully dark," not "clean."
+
+**`smtp`'s `success` field has the same trap, for a different reason.** It gates on the banner + `EHLO` response only, never on `RCPT` — a real relay correctly rejecting `RCPT TO:<probe@lab.invalid>` with `550` still reads `success:true`. A `success:true` row whose `output` shows capability tokens masked as runs of `X` (e.g. `250-XXXXXXXX`) is not a clean pass — it's a finding: an ALG on the path is rewriting ESMTP in flight. Always read `output` before calling an `smtp` pair healthy, same discipline as `loss`.
 
 Judging traceroute against a one-per-minute baseline would report an ~80% reporting gap that is purely by design.
 
@@ -72,7 +75,7 @@ Group failures by the target's router and by the source's router (join through `
 
 Per pair and test type: median, p95, and trend across the window. Report drift only when it is large relative to the spread.
 
-**`http` and `loss` have fine-grained timing; nothing else does.** `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3` and `smb` are timed to whole seconds, so their `latency_ms` is always a multiple of 1000 and a value of 0 means "under a second", not "instant". Never report a trend or a percentile for those — there is no resolution to trend. `loss`'s `latency_ms` is fping's real decimal-ms average, same resolution as `http`.
+**`http` and `loss` have fine-grained timing; nothing else does.** `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`, `smb` and `smtp` are timed to whole seconds, so their `latency_ms` is always a multiple of 1000 and a value of 0 means "under a second", not "instant". Never report a trend or a percentile for those — there is no resolution to trend. `loss`'s `latency_ms` is fping's real decimal-ms average, same resolution as `http`.
 
 ### Step 6: Traceroute paths
 

@@ -93,7 +93,7 @@ filter on UTC text comparison, so skew makes rows invisible rather than wrong.
 
 ## Adding a Test Type
 
-A new test type needs no schema change — `test_type` is free text. Add the producer in `test-vm/scripts/test-cycle.sh` and teach the dashboard to render it. Keep the type string lowercase and stable. `VALID_TESTS` in `app.py` is the authoritative set; it must agree with what `test-cycle.sh` emits and with `TYPE_LABELS` in the dashboard, and the regression suite's Tier 3 checks exactly that three-way agreement. Also decide `COARSE_TIMING` deliberately: whole-second `date +%s` timing (ssh/traceroute/pmtu/dns/iperf3/smb) goes in it, real sub-second precision (http, loss) does not — adding a fine-grained type to `COARSE_TIMING` by copy-paste habit silently throws away its resolution.
+A new test type needs no schema change — `test_type` is free text. Add the producer in `test-vm/scripts/test-cycle.sh` and teach the dashboard to render it. Keep the type string lowercase and stable. `VALID_TESTS` in `app.py` is the authoritative set; it must agree with what `test-cycle.sh` emits and with `TYPE_LABELS` in the dashboard, and the regression suite's Tier 3 checks exactly that three-way agreement. Also decide `COARSE_TIMING` deliberately: whole-second `date +%s` timing (ssh/traceroute/pmtu/dns/iperf3/smb/smtp) goes in it, real sub-second precision (http, loss) does not — adding a fine-grained type to `COARSE_TIMING` by copy-paste habit silently throws away its resolution.
 
 ## Retention
 

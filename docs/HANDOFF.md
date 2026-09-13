@@ -1,6 +1,6 @@
 # Lab-Tester — Session Handoff
 
-Last updated: 2026-09-13. Written so a fresh session on any surface (Claude Code
+Last updated: 2026-09-14. Written so a fresh session on any surface (Claude Code
 in the terminal, the desktop app, claude.ai) can pick up without the prior chat.
 Architecture lives in `CLAUDE.md`, build order and the deployment checklist in
 `docs/DEPLOYMENT.md`, step detail in `docs/BUILD_GUIDE.md`. This file is state
@@ -43,6 +43,38 @@ and intent only.
 > sound.
 
 ## Recent changes
+
+**`smtp` test type, the ninth (2026-09-14).**
+
+Client-compatible (no schema/contract change) — `VALID_TESTS` plus dashboard
+`TYPE_LABELS`/`PAIR_TEST_TYPES`/`TYPE_NAMES`/`COARSE_TIMING` (letter `E`).
+Full mesh, gated behind `ENABLE_SMTP` (default false); the static-target arm
+is deliberately **ungated**, unlike `smb`'s — registering a target is already
+an explicit opt-in, and the client side can't send mail regardless.
+
+Catches what `smb` can't: a device that *passes* SMTP while *rewriting* it —
+Cisco ESMTP inspection / ASA ESMTP fixup masks unrecognised capability verbs
+(e.g. `STARTTLS`) with runs of `X`. The probe holds a real envelope
+conversation (`EHLO` → `MAIL FROM:<>` → `RCPT TO:<probe@lab.invalid>` →
+`RSET` → `QUIT`) via hand-rolled `nc` (curl was considered and rejected —
+without a real upload it issues `VRFY` instead of `MAIL`/`RCPT`, and its
+exact verb behavior has regressed across versions). `success` gates on the
+banner + `EHLO` response only, never `RCPT` — a real relay correctly
+rejecting the probe with `550` must not read as a failure. Never issues
+`DATA`.
+
+**Security is the load-bearing part of this change**, now CLAUDE.md
+constraint 21: `test-vm/services/smtpd.conf` must never contain a `relay`
+action or a `match ... for any` — structural guarantees, not policy, since
+this lab has a real NAT/default-route path to the internet
+(`docs/csr-example-r1.cfg`). The Alpine `opensmtpd` package's default config
+*does* ship a relay action, so the `cp -f` that installs our own config in
+`build-template.sh` is load-bearing, backed by a build-time grep warning and
+a new regression-tester check (`grep -n relay test-vm/services/smtpd.conf`
+must be comments-only). Own `lab-smtpd` OpenRC service, deliberately not the
+packaged `opensmtpd-openrc` (bare `smtpd` service name — same collision risk
+`httpd` was, and it would bypass `ENABLE_SMTP` and every safety guard if an
+operator enabled it directly).
 
 **`loss` test type, SNMP polling, and the config file download server (2026-09-13).**
 
@@ -196,8 +228,9 @@ every window silently.
 9. *`/api/results?minutes=-5`* built `'--5 minutes'`, which SQLite evaluates to
    NULL — an empty matrix with a 200, indistinguishable from a dead lab.
 
-`CLAUDE.md`'s numbered constraint list now runs to 20. The `regression-tester`
-agent has a check per constraint (R1–R20) plus a wire-contract tier.
+`CLAUDE.md`'s numbered constraint list now runs to 21. The `regression-tester`
+agent has a check per constraint (R1–R21, some split into sub-checks like R14b)
+plus a wire-contract tier.
 
 ## Designed but NOT implemented
 

@@ -151,7 +151,9 @@ Verify before moving on:
       Alpine's default NTP pool, and nothing points them at the hub
 - [ ] Verify dropbear, httpd, iperf3, crond and lldpd are running; identity
       page renders. If `ENABLE_SMB=true`, verify `lab-smbd` is running too —
-      it is not started by default (lldpd, unlike smb, always is)
+      it is not started by default (lldpd, unlike smb, always is). Same for
+      `lab-smtpd` under `ENABLE_SMTP`, plus `grep -n relay /etc/smtpd/smtpd.conf`
+      returning nothing but comments before trusting it with a real network path
 - [ ] Confirm registration works against the live hub before sealing the image
 - [ ] Clean up (BUILD_GUIDE 7): clear machine-id, remove dropbear host keys,
       clear logs, zero free space

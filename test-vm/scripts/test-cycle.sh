@@ -29,8 +29,9 @@ fi
 ENABLE_IPERF="${ENABLE_IPERF:-false}"
 # Inline default, not just config.sample: setup.sh never rewrites an
 # existing config file, so every already-deployed VM runs this script
-# against a config with no ENABLE_SMB line at all.
+# against a config with no ENABLE_SMB or ENABLE_SMTP line at all.
 ENABLE_SMB="${ENABLE_SMB:-false}"
+ENABLE_SMTP="${ENABLE_SMTP:-false}"
 MY_HOSTNAME=$(hostname)
 SSH_KEY="${SSH_KEY:-/etc/lab-tester/id_lab}"
 
@@ -451,6 +452,106 @@ run_smb_test() {
 }
 
 # -------------------------------------------------------------------
+# Run SMTP test against a target.
+#
+# Nothing else in this mesh catches a device that PASSES SMTP while
+# REWRITING it. Cisco ESMTP inspection / ASA ESMTP fixup masks unrecognised
+# capability verbs with runs of X (a client sees "250-XXXXXXXX" instead of
+# "250-STARTTLS"). smb catches inspection that drops or stalls a session;
+# this catches inspection that silently edits one.
+#
+# Success stops at EHLO, not RCPT. A real, correctly-configured relay will
+# (and should) reject RCPT TO:<probe@lab.invalid> with something like
+# "550 relay access denied" -- that must NOT paint a healthy relay red.
+# Mirrors run_loss_test()'s philosophy: the interesting signal here is data
+# (the capability list, whether it's masked, what MAIL/RCPT/RSET actually
+# said), not a binary gate, so all of that goes into `output` and only
+# banner+EHLO decide success/failure.
+#
+# The conversation never issues DATA -- it's aborted with RSET right after
+# the envelope. That is what makes probing a real, unconfigured-by-us relay
+# safe: this VM has a real path to the internet (NAT overload + default
+# route, see docs/csr-example-r1.cfg), so never reaching DATA is a hard
+# guarantee this test cannot actually send mail anywhere, healthy relay or
+# not.
+#
+# Client is hand-rolled nc (BusyBox, already on the image via
+# busybox-extras), not curl: curl's smtp:// support issues VRFY rather than
+# MAIL FROM/RCPT TO without a -T upload, and most relays disable or misread
+# VRFY as address-harvesting. See build-template.sh's package notes / the
+# design doc for the fuller reasoning.
+# -------------------------------------------------------------------
+run_smtp_test() {
+    _target_ip="$1"
+    _port="${SMTP_PORT:-25}"
+    _helo="${SMTP_HELO:-$MY_HOSTNAME}"
+    _from="${SMTP_MAIL_FROM:-}"
+    _rcpt="${SMTP_RCPT:-probe@lab.invalid}"
+    _timeout="${SMTP_TIMEOUT:-10}"
+    _start_s=$(date +%s)
+
+    # The leading `sleep 1` before writing anything is not padding: anti-spam
+    # "early talker" detection drops clients that speak before reading the
+    # 220 banner, which is exactly the false failure this test must not
+    # cause. Everything from EHLO onward is pipelined deliberately (RFC 2920
+    # permits pipelining once EHLO has succeeded) -- that's what keeps this
+    # near 3s instead of 6s. Both `sleep 1`s stay: they give the server time
+    # to finish writing its full multiline 250- capability list before
+    # anything downstream reads the buffer, and reliably capturing that full
+    # list is this test's entire value.
+    #
+    # `timeout` wraps nc only, not this whole pipeline: the generator here
+    # has nothing but fixed sleeps and printf, so it cannot hang on its own.
+    # If nc exits first (timeout, refusal, RST), the generator gets EPIPE on
+    # its next write, which the trailing `|| true` on the whole assignment
+    # absorbs.
+    _output=$( { sleep 1
+                 printf 'EHLO %s\r\n' "$_helo"
+                 sleep 1
+                 printf 'MAIL FROM:<%s>\r\n' "$_from"
+                 printf 'RCPT TO:<%s>\r\n' "$_rcpt"
+                 printf 'RSET\r\n'
+                 printf 'QUIT\r\n'
+               } | timeout "$_timeout" nc -w 5 "$_target_ip" "$_port" 2>&1 ) || true
+
+    _end_s=$(date +%s)
+    _elapsed=$(( _end_s - _start_s ))
+    _latency=$(( _elapsed * 1000 ))
+
+    # Banner: the very first line of the session must be a 220. EHLO
+    # response: any 250-/250 line following it. Since EHLO is the first and
+    # only command sent before this check, a bare "250" appearing at all
+    # after a real banner is, in practice, EHLO's response -- a server that
+    # rejected EHLO would answer MAIL FROM with "503 bad sequence", not 250.
+    _banner_ok="no"
+    printf '%s' "$_output" | head -1 | grep -q '^220' && _banner_ok="yes"
+
+    _ehlo_ok="no"
+    printf '%s' "$_output" | grep -qE '^250[ -]' && _ehlo_ok="yes"
+
+    if [ "$_banner_ok" = "yes" ] && [ "$_ehlo_ok" = "yes" ]; then
+        _success="true"
+    else
+        _success="false"
+    fi
+
+    # Capability masking detector -- the single most important line of logic
+    # in this function. A run of 4+ literal X characters where a capability
+    # token should be is the signature Cisco ESMTP inspection / ASA fixup
+    # leaves behind when it scrubs a verb it doesn't recognise.
+    _mask_note=""
+    if printf '%s' "$_output" | grep -qE '^250[ -]X{4,}'; then
+        _mask_note="ESMTP capabilities masked (XXXXXXXX) -- ALG/inspection rewriting on path. "
+    fi
+
+    _summary="${_mask_note}$(printf '%s' "$_output" | tr -d '\r' | tr '\n' ' ')"
+    _output_escaped=$(json_escape "$_summary")
+
+    printf '{"target_hostname":"%s","target_ip":"%s","test_type":"smtp","success":%s,"latency_ms":%s,"output":%s,"timestamp":"%s"}' \
+        "$2" "$_target_ip" "$_success" "$_latency" "$_output_escaped" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+}
+
+# -------------------------------------------------------------------
 # Decide whether traceroute runs this cycle.
 #
 # Traceroute is by far the most expensive test, and its value is diagnostic
@@ -567,6 +668,15 @@ while [ "$i" -lt "$ENDPOINT_COUNT" ]; do
         append_result "$SMB_RESULT"
     fi
 
+    # SMTP (optional). Like SMB, OpenSMTPD handles concurrent sessions fine
+    # (no iperf3-style contention/skip path needed) -- every failure is
+    # isolated with || true, same as every other test here.
+    if [ "$ENABLE_SMTP" = "true" ]; then
+        log "  SMTP test -> $EP_IP"
+        SMTP_RESULT=$(run_smtp_test "$EP_IP" "$EP_HOSTNAME") || true
+        append_result "$SMTP_RESULT"
+    fi
+
     TESTED=$((TESTED + 1))
     i=$((i + 1))
 done
@@ -612,6 +722,18 @@ while [ "$j" -lt "$TARGET_COUNT" ]; do
             if [ "$ENABLE_SMB" = "true" ]; then
                 R=$(run_smb_test "$TG_IP" "$TG_NAME") || true; append_result "$R"
             fi ;;
+    esac
+    case ",$TG_TESTS," in
+        # Deliberately UNGATED, unlike the smb arm above. Registering a
+        # static target via POST /targets is already an explicit opt-in by
+        # an operator, and the probe never issues DATA (see run_smtp_test's
+        # comment) -- it cannot send mail even against a real production
+        # relay. Requiring ENABLE_SMTP=true on top of that opt-in would force
+        # standing up a local OpenSMTPD instance just to probe an external
+        # target this VM can do nothing dangerous against. This asymmetry
+        # vs. smb is intentional, not a missed gate.
+        *,smtp,*)
+            R=$(run_smtp_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
     esac
     case ",$TG_TESTS," in
         *,traceroute,*)

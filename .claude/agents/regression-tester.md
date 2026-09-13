@@ -243,17 +243,39 @@ sed -n '/apk add --no-cache/,/^$/p' test-vm/build-template.sh
 grep -nE '^[^#]*dropbear-ssh' test-vm/build-template.sh
 grep -nE '^\s*iputils\s*\\?$' test-vm/build-template.sh
 grep -nE '^\s*samba\s*\\?$' test-vm/build-template.sh
+grep -nE '^[^#]*opensmtpd-openrc' test-vm/build-template.sh
 ```
 
-Pass: `iputils-ping`, `openssh-client`, `samba-server` and `samba-client` all
-present; the last three greps silent. Check the *exact* package, not the
-family. `iputils` (metapackage) also drags in arping, clockdiff and
-tracepath; `iputils-ping` is what provides the `-M do` the PMTU probe needs,
-at the same `/bin/ping` path BusyBox uses. `dropbear-ssh` installs its own
-`/usr/bin/ssh` symlink to `dbclient` and collides with
+Pass: `iputils-ping`, `openssh-client`, `samba-server`, `samba-client` and
+`opensmtpd` all present; the last four greps silent. (The last grep is
+anchored to exclude comment lines, same as the `dropbear-ssh` check above it
+— the package-notes block legitimately mentions `opensmtpd-openrc` by name
+to explain why it's excluded, so an unanchored grep would false-positive on
+its own explanatory comment.) Check the *exact*
+package, not the family. `iputils` (metapackage) also drags in arping,
+clockdiff and tracepath; `iputils-ping` is what provides the `-M do` the
+PMTU probe needs, at the same `/bin/ping` path BusyBox uses. `dropbear-ssh`
+installs its own `/usr/bin/ssh` symlink to `dbclient` and collides with
 `openssh-client-default` at that path, breaking the `-o` flags the SSH test
 passes. The `samba` metapackage drags in winbind and the AD domain-controller
-machinery; `samba-server` alone does not depend on either.
+machinery; `samba-server` alone does not depend on either. `opensmtpd-openrc`
+would install a bare `smtpd` OpenRC service an operator could enable by
+accident, bypassing `ENABLE_SMTP` and every safety guard in our own
+`smtpd.conf` — this project ships its own `lab-smtpd` initd instead.
+
+**R14b — the SMTP probe server can never send mail.**
+
+```sh
+grep -n 'relay' test-vm/services/smtpd.conf
+```
+
+Pass: every match is a comment (the file's own "no relay action, ever"
+explanation), never an actual `action ... relay` directive or a
+`match ... for any`. This is the one thing in this project that would be
+genuinely dangerous if it regressed — the lab has a live NAT/default-route
+path to the internet (`docs/csr-example-r1.cfg`), so a `relay` action here
+would make every test VM an internet-reachable open relay, not just a
+permissive one.
 
 **R15 — agent definitions parse.** A malformed header can stop an agent
 loading at all, which no amount of correct prose fixes.
@@ -567,9 +589,8 @@ node -e 'try{JSON.parse("{\"a\":0000}");console.log("LENIENT - do not use")}catc
 
 Stand up a live hub and post a real cycle — see `hub-api-developer`'s
 workflow. Shim `ping`, `ip`, `ssh`, `dig`, `traceroute`, `iperf3`,
-`smbclient` and `fping` on PATH, and run the scripts with their **logic
-unmodified**.
-Never hand-write the JSON: synthetic payloads are exactly the shortcut that
+`smbclient`, `fping` and `nc` on PATH, and run the scripts with their
+**logic unmodified**. Never hand-write the JSON: synthetic payloads are exactly the shortcut that
 let the `0000` bug through in the first place.
 
 Two edits to the scripts are permitted, because off Alpine there is no
@@ -618,10 +639,11 @@ grep -n "VALID_TESTS" hub/app/app.py
 grep -n "PAIR_TEST_TYPES\|TYPE_LABELS" hub/templates/dashboard.html
 ```
 
-Pass: the eight types agree across `test-cycle.sh`, `VALID_TESTS` and
+Pass: the nine types agree across `test-cycle.sh`, `VALID_TESTS` and
 `TYPE_LABELS`. `loss` must NOT appear in `COARSE_TIMING` — unlike the other
 non-`http` types, its `latency_ms` is fine-grained (fping's real decimal-ms
-average), not a `date +%s` whole-second delta. `PAIR_TEST_TYPES` correctly omits `dns` — it is per-source
+average), not a `date +%s` whole-second delta. `smtp` IS in `COARSE_TIMING`
+(whole-second `date +%s`, like `smb`). `PAIR_TEST_TYPES` correctly omits `dns` — it is per-source
 against a resolver and renders in its own panel; a per-source test in a
 source→target matrix can only ever be a permanently grey column. Confirm the
 dashboard legend is still *generated* from `TYPE_LABELS`; it was hardcoded

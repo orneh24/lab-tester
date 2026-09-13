@@ -67,7 +67,7 @@ to the VM logs before looking at the network.
 
 A failing direction with a working reverse points at the *target*, not the path:
 
-- Target's server is down — dropbear, busybox httpd, iperf3, or (if `ENABLE_SMB=true`) `lab-smbd` not started. Verify locally on the target first: `nc -z <ip> 22 80 445 5201` from a neighbour.
+- Target's server is down — dropbear, busybox httpd, iperf3, or (if `ENABLE_SMB=true`/`ENABLE_SMTP=true`) `lab-smbd`/`lab-smtpd` not started. Verify locally on the target first: `nc -z <ip> 22 25 80 445 5201` from a neighbour.
 - Target firewalled at the host level (Alpine default has none — if `iptables` rules exist, someone added them).
 - If both directions fail for every pair crossing one router, and traceroute dies at that hop, it is a router problem.
 - Before concluding it's the router, check `lldpcli show neighbors` on the VM (always-on, not gated) — a VM on the wrong vSwitch port group registers and often still gets a DHCP lease, but is plugged into the wrong place entirely.
@@ -76,6 +76,10 @@ A failing direction with a working reverse points at the *target*, not the path:
 ## `loss` Reads Differently Than the Other Types
 
 Its `success` field is `true` on any reply at all — a pair silently losing 30% of packets every cycle still shows `success: true` on every `loss` row. The loss percentage and jitter live in `output` (the `%loss`/`min/avg/max` text), not in `success`. When a link "passes" every test but users report intermittent slowness, `loss`'s `output` is the first place to look — everything else here is binary pass/fail and won't show it.
+
+## `smtp` Can Pass While Being Rewritten
+
+Its `success` field gates on the banner + `EHLO` response only — a real relay correctly rejecting the probe's `RCPT TO:<probe@lab.invalid>` with `550` still reads `success: true`, and that's expected, not a bug to chase. The signal worth reading is in `output`: if the EHLO capability list comes back with tokens masked as runs of `X` (e.g. `250-XXXXXXXX` instead of `250-STARTTLS`), a device on the path — most likely Cisco ESMTP inspection or an ASA ESMTP fixup — is rewriting the session in flight, not blocking it. That's a `success: true` row that still deserves attention. This is exactly the class of fault `smtp` exists to catch: `smb`/`loss`/`pmtu` all catch a path that drops or degrades traffic, but nothing else here catches one that silently edits it.
 
 ## Reading Traceroute Output
 
@@ -136,7 +140,7 @@ show logging | include denied
 debug ip icmp        ! sparingly, and undebug all afterwards
 ```
 
-Test type matters: ICMP passing while TCP/80 fails is almost always an ACL permitting `icmp` but not `tcp eq www`. iperf3 needs 5201/tcp open in both directions; smb needs 445/tcp open in both directions.
+Test type matters: ICMP passing while TCP/80 fails is almost always an ACL permitting `icmp` but not `tcp eq www`. iperf3 needs 5201/tcp open in both directions; smb needs 445/tcp open in both directions; smtp needs 25/tcp open in both directions.
 
 ## Hub-Side Checks
 
