@@ -318,6 +318,12 @@ test-vm/
                         lab-tester-httpd.conf, logrotate.conf,
                         firstboot.initd (lab-tester-firstboot)
   config.sample
+deploy/
+  deploy-routers.ps1        — PowerCLI: deploys bare CSR1000v VMs from a
+                              manifest (sizing + 3-vNIC mapping only, no
+                              config — see docs/DEPLOYMENT.md stage 1)
+  lab-manifest.sample.ps1   — placeholder deploy manifest, copy to
+                              lab-manifest.ps1 (gitignored) with real values
 docs/BUILD_GUIDE.md
 ```
 

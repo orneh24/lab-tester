@@ -62,6 +62,8 @@ the hub is the only write path; a router pulls its config with `copy http://`.
   AS per router), a VRF-isolated management plane, NAT for internet access.
   Baseline + worked-example configs in `docs/csr-baseline.cfg` /
   `docs/csr-example-r1.cfg`; diagram in [`docs/TOPOLOGY.md`](docs/TOPOLOGY.md).
+  `deploy/deploy-routers.ps1` (PowerCLI) deploys the bare VMs — sizing and
+  the 3-vNIC mapping only, no config.
 
 Full design and the constraints that must not regress are in
 [`CLAUDE.md`](CLAUDE.md).
@@ -92,3 +94,4 @@ skips both. Ports below 1024 need root, hence `HUB_SYSLOG_PORT` above here.
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Current state, recent changes, open items |
 | [`docs/TOPOLOGY.md`](docs/TOPOLOGY.md) | Network diagram — segments, routing, hub NICs |
 | [`docs/csr-baseline.cfg`](docs/csr-baseline.cfg), [`docs/csr-example-r1.cfg`](docs/csr-example-r1.cfg) | CSR1000v config templates (placeholders, not real addresses) |
+| [`deploy/deploy-routers.ps1`](deploy/deploy-routers.ps1), [`deploy/lab-manifest.sample.ps1`](deploy/lab-manifest.sample.ps1) | PowerCLI: deploys bare CSR1000v VMs from a manifest |

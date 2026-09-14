@@ -36,7 +36,14 @@ internet access, and the SNMP read-only community. See `docs/TOPOLOGY.md` for
 the diagram. Both files use `<PLACEHOLDER>` tokens throughout; nothing in them
 is a real address.
 
-- [ ] Deploy the routers; configure inside and outside interfaces
+`deploy/deploy-routers.ps1` deploys the bare VMs (correct sizing, correct
+per-router network mapping) from a manifest — see `deploy/lab-manifest.sample.ps1`.
+It does not apply config; that's still console work, below. Its vNIC
+convention (`GigabitEthernet1`=mgmt, `2`=outside, `3`=inside) is what
+`<MGMT_IF>`/`<OUTSIDE_IF>`/`<INSIDE_IF>` resolve to everywhere in this
+project.
+
+- [ ] Deploy the routers (`deploy/deploy-routers.ps1`); configure inside and outside interfaces
 - [ ] Routing between routers so inside subnets reach each other
 - [ ] DHCP pool on each inside interface
 - [ ] Routing so every inside subnet reaches the hub segment (global table)

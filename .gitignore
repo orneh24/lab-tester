@@ -11,6 +11,10 @@ __pycache__/
 # Local env overrides (see docs/HANDOFF.md "Running the hub locally")
 hub.env
 
+# Operator's real deploy values — deploy/lab-manifest.sample.ps1 is the
+# committed placeholder-only version
+deploy/lab-manifest.ps1
+
 # Generated at build time by hub/build-template.sh — not source
 hub/agent/
 

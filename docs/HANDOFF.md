@@ -44,6 +44,33 @@ and intent only.
 
 ## Recent changes
 
+**PowerCLI router deployment script, Phase 1 (2026-09-14).**
+
+`deploy/deploy-routers.ps1` + `deploy/lab-manifest.sample.ps1`. Deploys N
+bare CSR1000v VMs from a manifest with correct sizing (1 vCPU / 4 GB / 8 GB
+thin, `ipbase`) and correct per-router network mapping — three vNICs mapped
+at OVA import time via `Get-OvfConfiguration`/`Import-VApp`, never with a
+post-import `Set-NetworkAdapter` (piping all adapters into one call would
+put mgmt/outside/inside on the same port group, silently). Establishes and
+now documents (in `csr-example-r1.cfg`'s placeholder header and
+`DEPLOYMENT.md` stage 1) the vNIC convention every future router-facing tool
+should assume: `GigabitEthernet1`=mgmt, `2`=outside, `3`=inside.
+
+Deliberately does **not** inject day-0 config via OVF properties —
+`csr-baseline.cfg` applies `vrf forwarding MGMT` to the mgmt interface as
+its first act, and `vrf forwarding` wipes an interface's existing IP
+config, so an injected management IP would be wiped by the very config
+that's meant to use it. Config application stays a manual console step,
+per `DEPLOYMENT.md` stage 1 exactly as before.
+
+This reopens `docs/HANDOFF.md`'s prior "No vCenter tooling, deliberately"
+decision — the user explicitly asked for PowerCLI. The **manifest** half of
+that entry's reasoning survives: one router identity (VM name, IOS
+`hostname`, the name syslog puts in its own messages, `guestinfo.lab.router`,
+`snmp_targets.name`) is load-bearing in five places that previously shared
+no single source. Config rendering and hub auto-registration from that same
+manifest remain unbuilt — see "Designed but NOT implemented" below.
+
 **`smtp` test type, the ninth (2026-09-14).**
 
 Client-compatible (no schema/contract change) — `VALID_TESTS` plus dashboard
@@ -296,11 +323,14 @@ but **nothing here works today**:
   shared management VLAN gives the *routers* a path to each other outside the
   tested topology, so leaked routing would turn the matrix green while
   measuring nothing.
-- **No vCenter tooling, deliberately.** Deployment is clone → correct port
-  group → power on. `govc` + a `lab.yaml` manifest is the option if the
-  topology starts churning; Packer if the golden image gets rebuilt often. A
-  manifest would also enable an expected-vs-registered check, which the
-  dashboard cannot do today.
+- **Router config rendering and hub auto-registration — not built.**
+  `deploy/deploy-routers.ps1` (below) deploys bare router VMs from a
+  manifest, but applying `csr-baseline.cfg`/`csr-example-rN.cfg` is still a
+  manual console step, and nothing pushes the manifest's router identities
+  into `POST /snmp/targets` or `POST /targets`. A config renderer plus a
+  registration script against the manifest would close this — and would
+  also be the expected-vs-registered check the dashboard cannot do today
+  (compare `GET /endpoints`'s router set against the manifest's).
 
 ## Conventions that must not drift
 
