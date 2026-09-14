@@ -1,6 +1,6 @@
 ---
 name: regression-tester
-description: Lab-tester regression gate. Invoke before handing any change to the user, and after any edit under test-vm/, hub/ or the build scripts — it re-runs the fixed battery of checks guarding every numbered constraint in CLAUDE.md, each of which is a bug that already shipped once, plus the wire contract and the two correlation surfaces (R21 /api/time, R22 dashboard syslog links) that have no numbered constraint behind them. Reports pass / fail / not-run per constraint with the command output as evidence, and blocks the handover on any fail.
+description: Lab-tester regression gate. Invoke before handing any change to the user, and after any edit under node/, hub/ or the build scripts — it re-runs the fixed battery of checks guarding every numbered constraint in CLAUDE.md, each of which is a bug that already shipped once, plus the wire contract and the two correlation surfaces (R21 /api/time, R22 dashboard syslog links) that have no numbered constraint behind them. Reports pass / fail / not-run per constraint with the command output as evidence, and blocks the handover on any fail.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -9,7 +9,7 @@ You are the gate this project runs before a change leaves the workstation.
 CLAUDE.md carries a numbered list of non-obvious constraints. That
 list is not advice — it is a bug log. Every entry was live at some point, and
 most of them failed *silently*: the mesh kept running, the dashboard kept
-rendering, and the data was wrong or the VMs were unrepairable. Your job is to
+rendering, and the data was wrong or the nodes were unrepairable. Your job is to
 prove each one still holds by running a check, not by reading the code and
 agreeing with it.
 
@@ -45,12 +45,12 @@ so.
 
 **R1 — hostnames unique per clone.** `endpoints.hostname` is the PRIMARY KEY;
 duplicates make clones overwrite each other and the mesh collapses to one
-entry, which every VM then skips as "self".
+entry, which every node then skips as "self".
 
 ```sh
 grep -n "hostname TEXT PRIMARY KEY" hub/app/app.py
-grep -n "lab-tester-template" test-vm/build-template.sh
-grep -n "/etc/hostname" test-vm/scripts/setup.sh
+grep -n "lab-tester-template" node/build-template.sh
+grep -n "/etc/hostname" node/scripts/setup.sh
 ```
 
 Pass: all three present — the template ships the placeholder name, `setup.sh`
@@ -79,7 +79,7 @@ grep -n "def iso\|def result_row" hub/app/app.py
 grep -n "iso(\|result_row(" hub/app/app.py
 ```
 
-Pass: the first grep matches only `api_syslog_sources` (`app.py:558`), whose
+Pass: the first grep matches only `api_syslog_sources` (`app.py:569`), whose
 `SELECT` returns `name, count` and carries no timestamp — that one hit is
 expected and is not a finding. Any *other* hit is: a route that selects a stored
 timestamp must route it through `iso()` or `result_row()` before returning. Read each hit of the
@@ -111,8 +111,8 @@ Pass: both end in `Z`. A space-separated value from either is a fail.
 `BatchMode=yes`, key auth only.
 
 ```sh
-grep -n "id_lab" test-vm/build-template.sh
-grep -n "dropbear_.*host_key" test-vm/build-template.sh
+grep -n "id_lab" node/build-template.sh
+grep -n "dropbear_.*host_key" node/build-template.sh
 ```
 
 Pass: cleanup deletes dropbear *host* keys and leaves `/etc/lab-tester/id_lab`
@@ -124,7 +124,7 @@ destination both resolve to `/usr/local/bin/lab-tester/` when run in place;
 `cp` exits 1 and `set -e` aborts the install half-done.
 
 ```sh
-sed -n '/Install scripts/,/crontab/p' test-vm/scripts/setup.sh
+sed -n '/Install scripts/,/crontab/p' node/scripts/setup.sh
 ```
 
 Pass: the two paths are compared before the `cp` pair.
@@ -132,8 +132,8 @@ Pass: the two paths are compared before the `cp` pair.
 **R5 — the web server is the OpenRC service `lab-httpd`.**
 
 ```sh
-grep -rn "rc-update add lab-httpd" test-vm/
-grep -rnE '^[^#]*busybox httpd|^[^#]*\bhttpd -p' test-vm/scripts/
+grep -rn "rc-update add lab-httpd" node/
+grep -rnE '^[^#]*busybox httpd|^[^#]*\bhttpd -p' node/scripts/
 ```
 
 Pass: first hits, second silent. A hand-launched httpd does not survive a
@@ -143,7 +143,7 @@ reboot and takes every HTTP test in the mesh with it.
 interval, and overlapping cycles skew every timing reported.
 
 ```sh
-grep -n "LOCK_DIR" test-vm/scripts/test-cycle.sh
+grep -n "LOCK_DIR" node/scripts/test-cycle.sh
 ```
 
 Pass: acquired before any test runs, released on `EXIT INT TERM`, and a stale
@@ -154,8 +154,8 @@ client at a time; a skipped run emits no JSON, and a bare append leaves a
 trailing comma — invalid JSON, whole batch rejected.
 
 ```sh
-grep -n -A 8 "append_result()" test-vm/scripts/test-cycle.sh
-awk '/^append_result\(\)/{inf=1} inf&&/^}/{inf=0;next} !inf && /RESULTS="\$\{?RESULTS/{print NR": "$0}' test-vm/scripts/test-cycle.sh
+grep -n -A 8 "append_result()" node/scripts/test-cycle.sh
+awk '/^append_result\(\)/{inf=1} inf&&/^}/{inf=0;next} !inf && /RESULTS="\$\{?RESULTS/{print NR": "$0}' node/scripts/test-cycle.sh
 ```
 
 Pass: `append_result` returns early on an empty argument, and the awk is
@@ -164,7 +164,7 @@ one, so the check deliberately skips that function body and flags any append
 made anywhere else.
 
 **R8 — retention sweeps still fire.** The hub has no cron; these are the only
-mechanism, and ~100k result rows/day accumulate at five VMs.
+mechanism, and ~100k result rows/day accumulate at five nodes.
 
 ```sh
 grep -n "prune_old_results\|prune_stale_endpoints" hub/app/app.py
@@ -179,8 +179,8 @@ Python's parser rejects the *entire batch* with a 400 — and on a healthy lab
 SSH is always sub-second, so nothing would ever be recorded.
 
 ```sh
-grep -nE "printf[^|]*%d0{3}" test-vm/scripts/*.sh
-grep -nE '\$\{?[A-Za-z_][A-Za-z_0-9]*\}?0{3}' test-vm/scripts/*.sh
+grep -nE "printf[^|]*%d0{3}" node/scripts/*.sh
+grep -nE '\$\{?[A-Za-z_][A-Za-z_0-9]*\}?0{3}' node/scripts/*.sh
 ```
 
 Pass: both silent. The three legitimate producers are `$(( _elapsed * 1000 ))`,
@@ -193,7 +193,7 @@ that is a curl fallback, not a number in the payload.
 overran the 60 s cycle — the tool slowed down exactly when the lab broke.
 
 ```sh
-grep -nE "traceroute .*-q 1|TRACEROUTE_MAX_HOPS:-10|TRACEROUTE_INTERVAL:-300" test-vm/scripts/test-cycle.sh
+grep -nE "traceroute .*-q 1|TRACEROUTE_MAX_HOPS:-10|TRACEROUTE_INTERVAL:-300" node/scripts/test-cycle.sh
 ```
 
 Pass: `-q 1`, max hops defaulting to 10, interval defaulting to 300, and the
@@ -204,7 +204,7 @@ target.
 identity-page refresh and self-update run after it.
 
 ```sh
-awk '/Registration successful/{f=1} /update_script "test-cycle.sh"/{f=0} f && /^exit /{print NR": "$0}' test-vm/scripts/register.sh
+awk '/Registration successful/{f=1} /update_script "test-cycle.sh"/{f=0} f && /^exit /{print NR": "$0}' node/scripts/register.sh
 ```
 
 Pass: silent. Indented `exit 0`s inside the self-update guards (autoupdate
@@ -217,7 +217,7 @@ that drive `/etc/periodic/*` — including the daily logrotate run. Replacing it
 left rotation installed but never triggered, so the disk still filled.
 
 ```sh
-sed -n '/Install crontab/,/periodic entries/p' test-vm/scripts/setup.sh
+sed -n '/Install crontab/,/periodic entries/p' node/scripts/setup.sh
 ```
 
 Pass: `crontab -l` read first, any prior lab-tester block stripped, new
@@ -226,24 +226,24 @@ entries appended, and the surviving `run-parts` count logged.
 **R13 — only `test-cycle.sh` auto-updates.**
 
 ```sh
-grep -n 'update_script "' test-vm/scripts/register.sh
+grep -n 'update_script "' node/scripts/register.sh
 ```
 
 Pass: exactly one call, for `test-cycle.sh`. An `update_script "register.sh"`
 line is **release-blocking**: register.sh is the updater, so a copy that
 parses but fails at runtime would stop registration *and* disable the
-mechanism that would repair it, bricking every VM at once. There is also no
+mechanism that would repair it, bricking every node at once. There is also no
 non-circular way to verify it — running register.sh to test register.sh
 proves nothing.
 
 **R14 — package selection on Alpine is load-bearing.**
 
 ```sh
-sed -n '/apk add --no-cache/,/^$/p' test-vm/build-template.sh
-grep -nE '^[^#]*dropbear-ssh' test-vm/build-template.sh
-grep -nE '^\s*iputils\s*\\?$' test-vm/build-template.sh
-grep -nE '^\s*samba\s*\\?$' test-vm/build-template.sh
-grep -nE '^[^#]*opensmtpd-openrc' test-vm/build-template.sh
+sed -n '/apk add --no-cache/,/^$/p' node/build-template.sh
+grep -nE '^[^#]*dropbear-ssh' node/build-template.sh
+grep -nE '^\s*iputils\s*\\?$' node/build-template.sh
+grep -nE '^\s*samba\s*\\?$' node/build-template.sh
+grep -nE '^[^#]*opensmtpd-openrc' node/build-template.sh
 ```
 
 Pass: `iputils-ping`, `openssh-client`, `samba-server`, `samba-client` and
@@ -266,16 +266,15 @@ accident, bypassing `ENABLE_SMTP` and every safety guard in our own
 **R14b — the SMTP probe server can never send mail.**
 
 ```sh
-grep -n 'relay' test-vm/services/smtpd.conf
+grep -n 'relay' node/services/smtpd.conf
 ```
 
 Pass: every match is a comment (the file's own "no relay action, ever"
 explanation), never an actual `action ... relay` directive or a
 `match ... for any`. This is the one thing in this project that would be
-genuinely dangerous if it regressed — the lab has a live NAT/default-route
-path to the internet (`docs/csr-example-r1.cfg`), so a `relay` action here
-would make every test VM an internet-reachable open relay, not just a
-permissive one.
+genuinely dangerous if it regressed — a node may sit behind NAT with a real
+default route to the internet, so a `relay` action here would make every
+node an internet-reachable open relay, not just a permissive one.
 
 **R15 — agent definitions parse.** A malformed header can stop an agent
 loading at all, which no amount of correct prose fixes.
@@ -295,7 +294,7 @@ interactively, so auto-running it with no keys present would block the boot
 forever on a console nobody is watching.
 
 ```sh
-grep -n "lab.hub_url\|lab.router\|/dev/null" test-vm/services/firstboot.initd
+grep -n "lab.hub_url\|lab.group\|/dev/null" node/services/firstboot.initd
 ```
 
 Pass: both keys checked before `setup.sh` is invoked, and stdin redirected
@@ -505,8 +504,8 @@ be negative`.
 ISO-8601-with-Z; `/api/syslog` parses it through `sqlite_ts_arg()` and compares
 against timestamps stored in SQLite's space-separated form. **That is R2 and
 R18's trap in a third place**, and here the design disguises it: a
-router-filtered link coming back empty is a *documented, intended* outcome when
-a router logs under a different hostname, so an empty view from a genuinely
+group-filtered link coming back empty is a *documented, intended* outcome when
+a device logs under a different hostname, so an empty view from a genuinely
 broken window looks exactly like the failure CLAUDE.md tells you to expect.
 
 ```sh
@@ -517,7 +516,7 @@ grep -n "sqlite_ts_arg" hub/app/app.py
 ```
 
 Pass: `SYSLOG_PIN_MINUTES` is defined once and drives both the window maths and
-the link text; `syslogUrl()` emits `from=` and `to=`; the router variant appends
+the link text; `syslogUrl()` emits `from=` and `to=`; the group variant appends
 `&host=`; both call sites anchor on `received_at || timestamp`; the anchor goes
 through `parseTs()`, not a bare `new Date()`; and `api_syslog` still routes
 `from`/`to` through `sqlite_ts_arg`.
@@ -529,7 +528,7 @@ failing the check. UDP cannot backdate a message, so seed the rows directly:
 ```sh
 PIN=$(grep -oE 'SYSLOG_PIN_MINUTES *= *[0-9]+' hub/templates/dashboard.html | grep -oE '[0-9]+$')
 IN=$(date -u +"%Y-%m-%d %H:%M:%S"); OUT=$(date -u -d "-30 minutes" +"%Y-%m-%d %H:%M:%S")
-sqlite3 <scratch>/hub.db "INSERT INTO syslog (received_at,source_ip,host,message) VALUES ('$IN','10.0.0.1','R1','inside'),('$OUT','10.0.0.2','R2','outside');"
+sqlite3 <scratch>/hub.db "INSERT INTO syslog (received_at,source_ip,host,message) VALUES ('$IN','10.0.0.1','SW1','inside'),('$OUT','10.0.0.2','SW2','outside');"
 
 FROM=$(date -u -d "-${PIN} minutes" +%Y-%m-%dT%H:%M:%SZ)
 TO=$(date -u -d "+${PIN} minutes" +%Y-%m-%dT%H:%M:%SZ)
@@ -538,8 +537,8 @@ Q="http://127.0.0.1:<port>/api/syslog"
 n() { curl -s "$1" | python3 -c "import json,sys;print(len(json.load(sys.stdin)))"; }
 
 n "$Q?from=$FROM&to=$TO"                      # want 1
-n "$Q?from=$FROM&to=$TO&host=R1"              # want 1
-n "$Q?from=$FROM&to=$TO&host=R2"              # want 0
+n "$Q?from=$FROM&to=$TO&host=SW1"             # want 1
+n "$Q?from=$FROM&to=$TO&host=SW2"             # want 0
 n "$Q?from=$SHIFTED&to=$TO"                   # want 0
 ```
 
@@ -558,17 +557,17 @@ Static greps cannot catch a script that no longer parses or a payload that no
 longer serialises.
 
 ```sh
-for f in test-vm/scripts/*.sh test-vm/build-template.sh hub/build-template.sh \
-         hub/run.sh test-vm/services/*.initd; do
+for f in node/scripts/*.sh node/build-template.sh hub/build-template.sh \
+         hub/run.sh node/services/*.initd; do
     sh -n "$f" && echo "ok   $f" || echo "FAIL $f"
 done
 ```
 
-Bashism scan — the VMs run BusyBox ash, and every one of these parses fine in
+Bashism scan — the nodes run BusyBox ash, and every one of these parses fine in
 the bash running your check:
 
 ```sh
-grep -nE '\[\[|\blocal\b|<\(|\$RANDOM|\$\{[A-Za-z_]+,,' test-vm/scripts/*.sh
+grep -nE '\[\[|\blocal\b|<\(|\$RANDOM|\$\{[A-Za-z_]+,,' node/scripts/*.sh
 ```
 
 **JSON must be validated with a strict parser, not `jq`.** This is the whole
@@ -613,7 +612,7 @@ Every deployed golden image depends on these names. A rename here is silent:
 the hub keeps returning 200 and stores empty strings.
 
 ```sh
-grep -oE '"[a-z_]+":' test-vm/scripts/test-cycle.sh | sort -u   # emitted
+grep -oE '"[a-z_]+":' node/scripts/test-cycle.sh | sort -u   # emitted
 # Consumed. Both access forms: a direct r.get(), and the text(r, key) helper
 # that push_results uses for the NOT NULL columns (see R19). Matching only
 # r.get() finds two of the seven fields and silently passes a contract that
@@ -634,7 +633,7 @@ thrown away; a field read but not emitted is a column of empty strings.
 guide:
 
 ```sh
-grep -oE '"test_type":"[a-z0-9]+"' test-vm/scripts/test-cycle.sh | sort -u
+grep -oE '"test_type":"[a-z0-9]+"' node/scripts/test-cycle.sh | sort -u
 grep -n "VALID_TESTS" hub/app/app.py
 grep -n "PAIR_TEST_TYPES\|TYPE_LABELS" hub/templates/dashboard.html
 ```
@@ -704,7 +703,7 @@ NOT RUN  R2  live-hub filter check (reason it could not be run)
 
 ### Failures
 **R9 — latency_ms string-concatenated** — release-blocking
-  test-vm/scripts/test-cycle.sh:139
+  node/scripts/test-cycle.sh:139
     _latency="${_elapsed}000"
   Effect: a sub-second SSH test emits 0000; the hub's Python parser rejects
   the whole batch with a 400, so nothing from that cycle is recorded.
@@ -719,7 +718,7 @@ BLOCKED — 1 release-blocking failure, 1 check not run.
 ```
 
 Lead with the failure count, release-blocking ones first. R9, R13 and any
-Tier 3 mismatch always are — they break every VM at once or corrupt data
+Tier 3 mismatch always are — they break every node at once or corrupt data
 silently. State the verdict as **CLEAR**, **CLEAR WITH GAPS** (nothing failed
 but something could not be run) or **BLOCKED**.
 

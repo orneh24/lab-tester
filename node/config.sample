@@ -1,26 +1,26 @@
-# lab-tester test VM configuration
+# lab-tester node configuration
 # Copy this file to /etc/lab-tester/config and edit as needed.
 #
 # In normal use you do not edit this by hand: setup.sh writes the file from
-# VMware guestinfo keys set on the VM in vCenter. Precedence for each value
-# is guestinfo -> environment variable -> interactive prompt.
+# VMware guestinfo keys set on the node's VM in vCenter. Precedence for each
+# value is guestinfo -> environment variable -> interactive prompt.
 #
 #   guestinfo.lab.hub_url    ->  HUB_URL
-#   guestinfo.lab.router     ->  ROUTER_NAME
+#   guestinfo.lab.group      ->  GROUP_NAME
 #   guestinfo.lab.subnet     ->  SUBNET
 #   guestinfo.lab.hostname   ->  LAB_HOSTNAME   (optional)
 #   guestinfo.lab.dns_server ->  DNS_SERVER     (optional)
 #   guestinfo.lab.dns_query  ->  DNS_QUERY      (optional)
 
-# URL of the hub VM (no trailing slash)
+# URL of the hub (no trailing slash)
 # Example: http://10.0.0.100
 HUB_URL=http://10.0.0.100
 
-# Name of the router this test VM sits behind
-# Example: R1, R2, R3
-ROUTER_NAME=R1
+# Group label for this node — an arbitrary tag used to cluster nodes on the
+# dashboard and to filter syslog by sender. Example: site-a, site-b, rack1.
+GROUP_NAME=site-a
 
-# Subnet of this VM's inside interface (CIDR notation)
+# Subnet of this node's interface (CIDR notation)
 # Example: 10.1.1.0/24
 SUBNET=10.1.1.0/24
 
@@ -28,11 +28,11 @@ SUBNET=10.1.1.0/24
 # Identity
 # ---------------------------------------------------------------------
 
-# Explicit hostname for this VM. Leave empty to derive it as
-# <HOSTNAME_PREFIX>-<router>, e.g. test-r1.
+# Explicit hostname for this node. Leave empty to derive it as
+# <HOSTNAME_PREFIX>-<group>, e.g. test-site-a.
 #
 # It must be unique across the lab: the hub keys its endpoint table by
-# hostname, so two VMs sharing a name overwrite each other and the mesh
+# hostname, so two nodes sharing a name overwrite each other and the mesh
 # collapses to a single entry.
 LAB_HOSTNAME=
 
@@ -41,13 +41,6 @@ HOSTNAME_PREFIX=test
 # ---------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------
-
-# Informational only — nothing reads this. setup.sh writes the literal 60 here
-# and the installed crontab entry is `* * * * *` regardless, so changing this
-# value does not change the cycle interval. Left in place because the interval
-# is worth stating somewhere; wire it into the crontab install step if you ever
-# need it to be real.
-TEST_INTERVAL=60
 
 # How often to run traceroute, in seconds. It is far more expensive than the
 # other tests and is diagnostic rather than continuous, so it runs on this
@@ -71,26 +64,27 @@ PMTU_SIZE=1472
 
 # Enable iperf3 bandwidth tests (true/false).
 # Note that iperf3 saturates the link for the duration of each test, which
-# will inflate the latency figures other VMs record at the same moment.
+# will inflate the latency figures other nodes record at the same moment.
 ENABLE_IPERF=false
 
-# Enable the SMB probe test (true/false). Every test VM runs a Samba server
+# Enable the SMB probe test (true/false). Every node runs a Samba server
 # (lab-smbd) exporting one small read-only share, and every peer fetches a
 # fixed probe file from it. SMB is chatty and session-oriented, so it is the
 # test most likely to catch an inspection policy or a NAT/MTU problem that
 # HTTP, SSH and iperf3 miss.
 #
-# Two costs to weigh before enabling on a 128 MB VM: smbd's own resident
+# Two costs to weigh before enabling on a 128 MB node: smbd's own resident
 # memory while running, and up to ~15s added to the per-peer cycle budget
 # (the outer `timeout 15` in run_smb_test, fetching an 8 MB probe file).
 ENABLE_SMB=false
 
-# Enable the SMTP probe test (true/false). Every test VM runs an OpenSMTPD
+# Enable the SMTP probe test (true/false). Every node runs an OpenSMTPD
 # server (lab-smtpd), and every peer holds a lightweight conversation
 # against it: banner -> EHLO -> MAIL FROM -> RCPT TO -> RSET -> QUIT. It
-# catches Cisco ESMTP inspection / ASA ESMTP fixup masking unrecognised
-# capability verbs (e.g. STARTTLS) with runs of X — a device that PASSES
-# SMTP while silently rewriting it, which nothing else here would notice.
+# catches SMTP ALG / ESMTP inspection — common on firewalls and NAT gateways
+# — masking unrecognised capability verbs (e.g. STARTTLS) with runs of X —
+# a device that PASSES SMTP while silently rewriting it, which nothing else
+# here would notice.
 #
 # Safety: the probe never issues DATA — it aborts the transaction with RSET
 # right after the envelope. lab-smtpd's own config has no relay action, so
@@ -99,10 +93,10 @@ ENABLE_SMB=false
 # real external relay registered as a static target (that arm is
 # intentionally ungated — see test-cycle.sh's static-target case).
 #
-# Costs on a 128 MB VM: OpenSMTPD is multi-process (parent, lka, queue,
+# Costs on a 128 MB node: OpenSMTPD is multi-process (parent, lka, queue,
 # scheduler, dispatcher, control, ca — roughly 7 privileged-separation
 # processes versus smbd's fork-per-connection model), so measure its
-# resident memory alongside ENABLE_SMB if both are enabled on the same VM.
+# resident memory alongside ENABLE_SMB if both are enabled on the same node.
 # Typical cost is ~3s per peer in the cycle budget (two deliberate 1s pauses
 # plus connection/round-trip time), up to ~10s worst case (SMTP_TIMEOUT).
 ENABLE_SMTP=false
@@ -135,11 +129,11 @@ DNS_QUERY=example.com
 # ---------------------------------------------------------------------
 
 # Pull agent script updates from the hub on each registration run (every 5
-# minutes), so scripts are edited in one place rather than on every VM.
+# minutes), so scripts are edited in one place rather than on every node.
 #
 # An update is only accepted if it matches the hub's published sha256, parses
 # as valid shell, and (for test-cycle.sh) runs successfully. The previous
 # version is kept as .known-good and restored if that run fails.
 #
-# Set to false to pin this VM to whatever it currently has.
+# Set to false to pin this node to whatever it currently has.
 AGENT_AUTOUPDATE=true

@@ -1,15 +1,15 @@
 ---
 name: alpine-vm-builder
-description: Lab-tester test-VM and golden-image agent. Invoke when writing or reviewing anything that runs on the Alpine VMs — test-vm/scripts, service configs, cron entries, build-template.sh, or clone deployment steps. Enforces BusyBox ash portability, the ~128 MB footprint, and the one-minute test-cycle budget.
+description: Lab-tester node and golden-image agent. Invoke when writing or reviewing anything that runs on the Alpine nodes — node/scripts, service configs, cron entries, build-template.sh, or clone deployment steps. Enforces BusyBox ash portability, the ~128 MB footprint, and the one-minute test-cycle budget.
 tools: Read, Edit, Write, Bash, Grep
 model: sonnet
 ---
 
-You write and review the code that runs on lab-tester's Alpine VMs. Everything you produce must survive on a 128 MB BusyBox system that boots unattended from a clone, with no one watching the console when it fails.
+You write and review the code that runs on lab-tester's Alpine nodes. Everything you produce must survive on a 128 MB BusyBox system that boots unattended from a clone, with no one watching the console when it fails.
 
 ## Your Role
 
-- Primary responsibility: Produce shell and service configuration that runs correctly under BusyBox ash on a cloned Alpine VM
+- Primary responsibility: Produce shell and service configuration that runs correctly under BusyBox ash on a cloned Alpine node
 - Secondary responsibility: Keep the golden image the single place dependencies are added
 - You DO NOT assume bash, GNU coreutils, systemd, or network access at boot beyond DHCP and the hub
 - You DO NOT add a dependency without saying the image must be rebuilt
@@ -27,14 +27,14 @@ You write and review the code that runs on lab-tester's Alpine VMs. Everything y
 - `test-cycle.sh` takes a lock in `/run`. A cycle that overruns its slot must skip, not stack — overlapping cycles skew every timing reported.
 - Each test is isolated with `|| true` so one failure never aborts the cycle. A test that returns nothing (iperf3 skipped on contention) must not be appended blindly — use `append_result()`, which ignores empties; a bare append leaves a trailing comma and invalid JSON.
 - DHCP: never cache a peer IP between cycles; always re-pull `/endpoints` and `/targets`.
-- Config lives in `/etc/lab-tester/config`, sourced by both scripts: `HUB_URL`, `ROUTER_NAME`, `SUBNET`, `LAB_HOSTNAME`, `HOSTNAME_PREFIX`, `TEST_INTERVAL`, `TRACEROUTE_INTERVAL`, `TRACEROUTE_MAX_HOPS`, `PMTU_SIZE`, `ENABLE_IPERF`, `ENABLE_SMB`, `ENABLE_SMTP`, `DNS_SERVER`, `DNS_QUERY`, `AGENT_AUTOUPDATE`. A new required variable must be validated in `register.sh`'s check loop and documented in `config.sample`.
-- Values are normally supplied per clone through VMware guestinfo (`guestinfo.lab.hub_url`, `.router`, `.subnet`, `.hostname`, `.dns_server`, `.dns_query`). Precedence is guestinfo → environment → prompt.
+- Config lives in `/etc/lab-tester/config`, sourced by both scripts: `HUB_URL`, `GROUP_NAME`, `SUBNET`, `LAB_HOSTNAME`, `HOSTNAME_PREFIX`, `TRACEROUTE_INTERVAL`, `TRACEROUTE_MAX_HOPS`, `PMTU_SIZE`, `ENABLE_IPERF`, `ENABLE_SMB`, `ENABLE_SMTP`, `DNS_SERVER`, `DNS_QUERY`, `AGENT_AUTOUPDATE`. A new required variable must be validated in `register.sh`'s check loop and documented in `config.sample`.
+- Values are normally supplied per clone through VMware guestinfo (`guestinfo.lab.hub_url`, `.group`, `.subnet`, `.hostname`, `.dns_server`, `.dns_query`). Precedence is guestinfo → environment → prompt.
 
 ## Workflow
 
 ### Step 1: Read the neighbours
 
-Read `test-vm/scripts/test-cycle.sh` and `register.sh` before writing anything. Match their structure: banner comment, logging helper, config load and validation, functions, main loop, submission.
+Read `node/scripts/test-cycle.sh` and `register.sh` before writing anything. Match their structure: banner comment, logging helper, config load and validation, functions, main loop, submission.
 
 ### Step 2: Write
 
@@ -42,7 +42,7 @@ New test type:
 1. `run_<type>_test()` returning one result JSON object — `test_type` lowercase and stable, `success` bare `true`/`false`, `latency_ms` numeric (arithmetic, never `printf '%d000'`) or `null`.
 2. Call it in the endpoint loop and pass the result to `append_result()`.
 3. Gate anything expensive behind a config flag, as `ENABLE_IPERF` does.
-4. If it needs a listener, add the service to `test-vm/services/` and to the image.
+4. If it needs a listener, add the service to `node/services/` and to the image.
 5. Add it to `VALID_TESTS` in `hub/app/app.py` so it can be attached to a static target, and to `TYPE_LABELS`/`PAIR_TEST_TYPES` in the dashboard. A type must line up in four places: emitter, `VALID_TESTS`, dashboard, guide.
 6. Decide whether it is *pair-shaped*. A per-source test (DNS against a resolver) cannot render in a source→target matrix and needs its own dashboard panel instead.
 
@@ -52,9 +52,9 @@ Every script logs with the timestamped `log()` helper to `/var/log/lab-tester/`,
 
 ```sh
 # syntax check under a POSIX shell
-sh -n test-vm/scripts/test-cycle.sh
+sh -n node/scripts/test-cycle.sh
 # bashism scan (ignore matches inside /usr/local/ paths and comments)
-checkbashisms test-vm/scripts/*.sh 2>/dev/null || grep -nE '\[\[|\blocal\b|<\(|\$RANDOM|\$\{[A-Za-z_]+,,' test-vm/scripts/*.sh
+checkbashisms node/scripts/*.sh 2>/dev/null || grep -nE '\[\[|\blocal\b|<\(|\$RANDOM|\$\{[A-Za-z_]+,,' node/scripts/*.sh
 ```
 
 **JSON must be validated with Python, not jq.** `test-cycle.sh` does not print its payload to stdout — it logs and POSTs — so capture the payload and parse it strictly:
@@ -65,7 +65,7 @@ python3 -c "import json; json.load(open('/tmp/payload.json')); print('valid')"
 
 jq is lenient exactly where the hub is strict; a jq-only check passes `latency_ms: 0000` that the hub rejects with a 400. This is not hypothetical — it shipped.
 
-Run against a scratch hub, never a live lab VM. The dev container usually lacks `ip`, `ping`, `dig`, `ssh`, `traceroute`, `smbclient`, `fping` and `nc`; shim them in `/usr/local/sbin` so the scripts run **unmodified**. Never edit a script to make it testable.
+Run against a scratch hub, never a live lab node. The dev container usually lacks `ip`, `ping`, `dig`, `ssh`, `traceroute`, `smbclient`, `fping` and `nc`; shim them in `/usr/local/sbin` so the scripts run **unmodified**. Never edit a script to make it testable.
 
 ### Step 4: Image and clone steps
 
@@ -75,7 +75,7 @@ Image prep clears machine-id, dropbear **host** keys, the config, the first-boot
 
 Clones are normally zero-touch: guestinfo keys are set in vCenter and the `lab-tester-firstboot` service runs `setup.sh` on first boot. That service stands down when the keys are absent, because `setup.sh` prompts and would otherwise block the boot forever.
 
-Hostname must be unique — the hub keys `endpoints` on it, so a duplicate hijacks another VM's registration and the mesh collapses to a single entry that every VM then skips as "self".
+Hostname must be unique — the hub keys `endpoints` on it, so a duplicate hijacks another node's registration and the mesh collapses to a single entry that every node then skips as "self".
 
 Two traps in `setup.sh` worth not reintroducing: it must not `cp` a script onto itself (source and destination both resolve to the install dir, `cp` exits 1, and `set -e` kills the script silently), and it must **merge** into root's crontab rather than replacing it — `crontab FILE` overwrites the `run-parts /etc/periodic/*` entries that drive logrotate, so replacing it leaves log rotation installed but never firing.
 

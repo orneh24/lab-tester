@@ -48,11 +48,11 @@ def init_db():
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript("""
         CREATE TABLE IF NOT EXISTS endpoints (
-            hostname TEXT PRIMARY KEY,
-            ip       TEXT NOT NULL,
-            subnet   TEXT NOT NULL,
-            router   TEXT NOT NULL,
-            last_seen TEXT NOT NULL
+            hostname   TEXT PRIMARY KEY,
+            ip         TEXT NOT NULL,
+            subnet     TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            last_seen  TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS results (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,34 +85,10 @@ def init_db():
             message     TEXT,
             raw         TEXT
         );
-        CREATE TABLE IF NOT EXISTS snmp_targets (
-            name      TEXT PRIMARY KEY,
-            mgmt_ip   TEXT NOT NULL,
-            community TEXT,
-            note      TEXT DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS snmp_metrics (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            router_name      TEXT NOT NULL,
-            mgmt_ip          TEXT NOT NULL,
-            sys_name         TEXT,
-            if_descr         TEXT,
-            if_in_octets     INTEGER,
-            if_out_octets    INTEGER,
-            if_in_errors     INTEGER,
-            if_out_errors    INTEGER,
-            if_in_discards   INTEGER,
-            if_out_discards  INTEGER,
-            polled_at        TEXT NOT NULL,
-            status           TEXT NOT NULL,
-            error_detail     TEXT
-        );
         CREATE INDEX IF NOT EXISTS idx_results_received ON results(received_at);
         CREATE INDEX IF NOT EXISTS idx_results_source_target ON results(source, target_hostname);
         CREATE INDEX IF NOT EXISTS idx_syslog_received ON syslog(received_at);
         CREATE INDEX IF NOT EXISTS idx_syslog_host ON syslog(host);
-        CREATE INDEX IF NOT EXISTS idx_snmp_metrics_polled ON snmp_metrics(polled_at);
-        CREATE INDEX IF NOT EXISTS idx_snmp_metrics_router ON snmp_metrics(router_name, polled_at);
     """)
 
     # Migration for databases created before received_at existed.
@@ -123,17 +99,27 @@ def init_db():
         db.execute("CREATE INDEX IF NOT EXISTS idx_results_received ON results(received_at)")
         db.commit()
 
+    # Migration for the router-scope removal: the endpoints column was
+    # `router`, and two tables existed only to poll router SNMP counters.
+    ep_cols = {r[1] for r in db.execute("PRAGMA table_info(endpoints)").fetchall()}
+    if "router" in ep_cols and "group_name" not in ep_cols:
+        db.execute("ALTER TABLE endpoints RENAME COLUMN router TO group_name")
+        db.commit()
+    db.execute("DROP TABLE IF EXISTS snmp_metrics")
+    db.execute("DROP TABLE IF EXISTS snmp_targets")
+    db.commit()
+
     db.close()
 
 
 def sqlite_now():
     """UTC timestamp in SQLite's own comparable format: 'YYYY-MM-DD HH:MM:SS'.
 
-    Test VMs send ISO-8601 with a 'T' separator and a 'Z' suffix. Comparing
+    Nodes send ISO-8601 with a 'T' separator and a 'Z' suffix. Comparing
     those against datetime('now', ...) is a string comparison in which 'T'
     (0x54) sorts above ' ' (0x20), so any same-day row passes any window.
     The hub therefore stamps its own receipt time in this format and filters
-    on that, which also makes filtering immune to test-VM clock drift.
+    on that, which also makes filtering immune to node clock drift.
     """
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -149,8 +135,8 @@ def prune_old_results(db):
 def prune_stale_endpoints(db):
     """Remove endpoints that have not re-registered within the stale window.
 
-    Test VMs re-register every 5 minutes, so an endpoint that has been silent
-    for hours is gone. Without this, every remaining VM keeps testing a dead
+    Nodes re-register every 5 minutes, so an endpoint that has been silent
+    for hours is gone. Without this, every remaining node keeps testing a dead
     IP forever and the matrix stays red.
     """
     db.execute(
@@ -165,21 +151,21 @@ def prune_stale_endpoints(db):
 
 @app.route("/register", methods=["POST"])
 def register():
-    """Register or update a test VM endpoint."""
+    """Register or update a node endpoint."""
     data = request.get_json(force=True)
-    required = ("hostname", "ip", "subnet", "router")
+    required = ("hostname", "ip", "subnet", "group_name")
     if not all(k in data for k in required):
         return jsonify({"error": "Missing required fields", "required": list(required)}), 400
 
     now = sqlite_now()
     db = get_db()
     db.execute(
-        """INSERT INTO endpoints (hostname, ip, subnet, router, last_seen)
+        """INSERT INTO endpoints (hostname, ip, subnet, group_name, last_seen)
            VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(hostname) DO UPDATE SET
                ip=excluded.ip, subnet=excluded.subnet,
-               router=excluded.router, last_seen=excluded.last_seen""",
-        (data["hostname"], data["ip"], data["subnet"], data["router"], now),
+               group_name=excluded.group_name, last_seen=excluded.last_seen""",
+        (data["hostname"], data["ip"], data["subnet"], data["group_name"], now),
     )
     db.commit()
     return jsonify({"status": "ok", "hostname": data["hostname"], "last_seen": iso(now)})
@@ -217,7 +203,7 @@ def list_endpoints():
     prune_stale_endpoints(db)
     db.commit()
     rows = db.execute(
-        "SELECT hostname, ip, subnet, router, last_seen FROM endpoints ORDER BY router, hostname"
+        "SELECT hostname, ip, subnet, group_name, last_seen FROM endpoints ORDER BY group_name, hostname"
     ).fetchall()
     out = []
     for r in rows:
@@ -240,7 +226,7 @@ def delete_endpoint(hostname):
 
 @app.route("/results", methods=["POST"])
 def push_results():
-    """Accept test results from a VM.
+    """Accept test results from a node.
 
     Missing and explicitly-null fields are both coerced to empty strings. This
     matters more than it looks: `.get(k, default)` returns the default only
@@ -345,11 +331,11 @@ def api_results_pair(source, target):
 # ---------------------------------------------------------------------------
 # Static targets
 #
-# Beyond the test-VM mesh, a lab usually wants reachability checked against
-# fixed addresses that run no agent at all — a router loopback, a VRF
-# interface, an outside address. These live on the hub so they are configured
-# once rather than on every VM, and each declares which tests apply to it
-# (a loopback answers traceroute and a PMTU probe but has no HTTP server).
+# Beyond the node mesh, a lab usually wants reachability checked against
+# fixed addresses that run no agent at all — a gateway, an outside host, a
+# device loopback. These live on the hub so they are configured once rather
+# than on every node, and each declares which tests apply to it (a loopback
+# answers traceroute and a PMTU probe but has no HTTP server).
 # ---------------------------------------------------------------------------
 
 VALID_TESTS = ("http", "ssh", "traceroute", "iperf3", "pmtu", "dns", "smb", "loss", "smtp")
@@ -357,7 +343,7 @@ VALID_TESTS = ("http", "ssh", "traceroute", "iperf3", "pmtu", "dns", "smb", "los
 
 @app.route("/targets", methods=["GET"])
 def list_targets():
-    """Static targets for test VMs to include in each cycle."""
+    """Static targets for nodes to include in each cycle."""
     db = get_db()
     rows = db.execute(
         "SELECT name, ip, tests, note FROM targets ORDER BY name"
@@ -412,144 +398,12 @@ def delete_target(name):
 
 
 # ---------------------------------------------------------------------------
-# SNMP targets and polled metrics
-#
-# snmp_poller.py is the writer — a background thread, started from serve.py
-# and gated on config.SNMP_ENABLED, that polls each row here and appends to
-# snmp_metrics. These routes only manage the target list and read what was
-# polled; a fresh table from `targets` deliberately, since a router the hub
-# polls itself is a different concept from an address merged into VM cycles.
-# ---------------------------------------------------------------------------
-
-@app.route("/snmp/targets", methods=["GET"])
-def list_snmp_targets():
-    db = get_db()
-    rows = db.execute(
-        "SELECT name, mgmt_ip, community, note FROM snmp_targets ORDER BY name"
-    ).fetchall()
-    return jsonify([dict(r) for r in rows])
-
-
-@app.route("/snmp/targets", methods=["POST"])
-def add_snmp_target():
-    """Add or update a router to poll. Mirrors /targets's validation style."""
-    data = request.get_json(force=True, silent=True)
-    if not isinstance(data, dict):
-        return jsonify({"error": "Body must be a JSON object"}), 400
-
-    name = data.get("name")
-    mgmt_ip = data.get("mgmt_ip")
-    if not name or not mgmt_ip:
-        return jsonify({"error": "name and mgmt_ip are required"}), 400
-
-    community = data.get("community")
-    community = str(community) if community else None
-
-    db = get_db()
-    db.execute(
-        """INSERT INTO snmp_targets (name, mgmt_ip, community, note)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(name) DO UPDATE SET
-               mgmt_ip=excluded.mgmt_ip, community=excluded.community, note=excluded.note""",
-        (str(name), str(mgmt_ip), community, str(data.get("note", ""))),
-    )
-    db.commit()
-    return jsonify({"status": "ok", "name": name, "mgmt_ip": mgmt_ip})
-
-
-@app.route("/snmp/targets/<name>", methods=["DELETE"])
-def delete_snmp_target(name):
-    db = get_db()
-    cur = db.execute("DELETE FROM snmp_targets WHERE name = ?", (name,))
-    db.commit()
-    if cur.rowcount == 0:
-        return jsonify({"error": "not found"}), 404
-    return jsonify({"status": "deleted", "name": name})
-
-
-def snmp_metric_row(r):
-    """Render a snmp_metrics row with polled_at in ISO, like every other route."""
-    d = dict(r)
-    d["polled_at"] = iso(d["polled_at"])
-    return d
-
-
-@app.route("/api/snmp", methods=["GET"])
-def api_snmp():
-    """Recent polled interface metrics. ?router=<name>, ?minutes=N (default 10).
-
-    Windowing mirrors /api/results exactly: filter on polled_at (this table's
-    equivalent of received_at — the hub's own clock, never a device's), and a
-    negative minutes value is folded to positive rather than building a
-    datetime() expression that silently matches nothing.
-    """
-    minutes = request.args.get("minutes", "10")
-    try:
-        minutes = int(minutes)
-    except ValueError:
-        minutes = 10
-    minutes = abs(minutes)
-
-    where = ["polled_at >= datetime('now', ? || ' minutes')"]
-    params = ["-{:d}".format(minutes)]
-
-    router = request.args.get("router")
-    if router:
-        where.append("router_name = ?")
-        params.append(router)
-
-    db = get_db()
-    rows = db.execute(
-        """SELECT router_name, mgmt_ip, sys_name, if_descr, if_in_octets, if_out_octets,
-                  if_in_errors, if_out_errors, if_in_discards, if_out_discards,
-                  polled_at, status, error_detail
-           FROM snmp_metrics
-           WHERE """ + " AND ".join(where) + """
-           ORDER BY polled_at DESC""",
-        params,
-    ).fetchall()
-    return jsonify([snmp_metric_row(r) for r in rows])
-
-
-@app.route("/api/snmp/sources", methods=["GET"])
-def api_snmp_sources():
-    """Configured routers with their most recent poll's sys_name and status.
-
-    Mirrors /api/syslog/sources's role as the thing a filter dropdown (or, here,
-    a summary panel) is built from — one row per configured target rather than
-    per message, since a poll round writes one row per interface and callers
-    want "how is this router doing", not a raw metrics dump.
-    """
-    db = get_db()
-    rows = db.execute(
-        """SELECT t.name AS name, t.mgmt_ip AS mgmt_ip,
-                  m.sys_name AS sys_name, m.status AS status,
-                  m.polled_at AS polled_at, m.error_detail AS error_detail
-           FROM snmp_targets t
-           LEFT JOIN snmp_metrics m ON m.id = (
-               SELECT id FROM snmp_metrics
-               WHERE router_name = t.name
-               ORDER BY polled_at DESC, id DESC
-               LIMIT 1
-           )
-           ORDER BY t.name"""
-    ).fetchall()
-    out = []
-    for r in rows:
-        d = dict(r)
-        if d["polled_at"]:
-            d["polled_at"] = iso(d["polled_at"])
-        out.append(d)
-    return jsonify(out)
-
-
-# ---------------------------------------------------------------------------
 # Syslog
 #
 # The receiver itself is syslog_server.py, started by serve.py in a daemon
 # thread. These routes only read what it stored. Correlation is the point:
-# a failing pair in the matrix means much more next to what the routers said
-# in that minute.
+# a failing pair in the matrix means much more next to what the network
+# devices between the nodes logged in that minute.
 #
 # Rows here are attacker-controlled in the sense that anything on the segment
 # can send UDP/514 with no authentication — so they are rendered as text by
@@ -653,8 +507,8 @@ def api_syslog():
         # bind, which is a 500 rather than the ignored-filter this intends.
         if level is not None:
             # Lower is more severe, so a chosen level means "this bad or worse"
-            # — matching how the same filter reads on a router. NULL rows are
-            # kept: a line the parser could not read has no severity, and
+            # — matching how the same filter reads on a network device. NULL
+            # rows are kept: a line the parser could not read has no severity, and
             # dropping it here would hide exactly the line the parser is
             # written never to discard.
             where.append("(severity <= ? OR severity IS NULL)")
@@ -677,7 +531,7 @@ def api_syslog():
              FROM syslog"""
     if where:
         sql += " WHERE " + " AND ".join(where)
-    # id breaks ties: received_at has one-second resolution and a router can
+    # id breaks ties: received_at has one-second resolution and a device can
     # emit a whole interface flap inside one second, which must stay in order.
     sql += " ORDER BY received_at DESC, id DESC LIMIT ?"
     params.append(limit)
@@ -842,7 +696,7 @@ def api_time():
 # Same failure-tolerance rule as /api/time: never 500. Each metric and each
 # service check is independently guarded, so one missing binary or unreadable
 # /proc file degrades that one field to null/"unknown" rather than blanking
-# the whole response — this is meant to be useful on a flaky VM, not just a
+# the whole response — this is meant to be useful on a flaky node, not just a
 # healthy one, and it is routinely run on non-Alpine dev boxes where
 # rc-service does not exist at all.
 # ---------------------------------------------------------------------------
@@ -954,7 +808,7 @@ def api_health():
     """Hub self-health: services, load, memory, disk, uptime.
 
     Always 200, matching /api/time — a health check that itself 500s on a
-    flaky VM would defeat the point. Every field degrades independently.
+    flaky node would defeat the point. Every field degrades independently.
     """
     services = {}
     for name in config.HEALTH_SERVICES:
@@ -977,8 +831,8 @@ def api_health():
 # ---------------------------------------------------------------------------
 # Agent distribution
 #
-# The hub is the single place agent scripts are edited; test VMs pull updates
-# on their 5-minute registration run. Checksums are published so a VM can
+# The hub is the single place agent scripts are edited; nodes pull updates
+# on their 5-minute registration run. Checksums are published so a node can
 # verify a download before trusting it — see register.sh, which additionally
 # syntax-checks and keeps a known-good copy before swapping anything in.
 # ---------------------------------------------------------------------------

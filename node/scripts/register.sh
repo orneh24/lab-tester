@@ -1,5 +1,5 @@
 #!/bin/sh
-# register.sh — Register this test VM with the lab-tester hub.
+# register.sh — Register this node with the lab-tester hub.
 # Runs on boot and every 5 minutes via cron.
 # Reads config from /etc/lab-tester/config.
 
@@ -29,7 +29,7 @@ fi
 . "$CONFIG"
 
 # Validate required variables
-for var in HUB_URL ROUTER_NAME SUBNET; do
+for var in HUB_URL GROUP_NAME SUBNET; do
     eval val=\$$var
     if [ -z "$val" ]; then
         log "ERROR: $var is not set in $CONFIG"
@@ -50,13 +50,13 @@ if [ -z "$IP" ]; then
     exit 1
 fi
 
-log "Detected hostname=$HOSTNAME ip=$IP router=$ROUTER_NAME subnet=$SUBNET"
+log "Detected hostname=$HOSTNAME ip=$IP group=$GROUP_NAME subnet=$SUBNET"
 
 # -------------------------------------------------------------------
 # Build JSON payload
 # -------------------------------------------------------------------
-PAYLOAD=$(printf '{"hostname":"%s","ip":"%s","subnet":"%s","router":"%s"}' \
-    "$HOSTNAME" "$IP" "$SUBNET" "$ROUTER_NAME")
+PAYLOAD=$(printf '{"hostname":"%s","ip":"%s","subnet":"%s","group_name":"%s"}' \
+    "$HOSTNAME" "$IP" "$SUBNET" "$GROUP_NAME")
 
 # -------------------------------------------------------------------
 # POST to hub with retry logic
@@ -96,7 +96,7 @@ fi
 #
 # It is generated once at setup time with the address of the moment. Under
 # DHCP that goes stale after a lease change, leaving the page advertising an
-# address the VM no longer has. Regenerating here keeps it honest.
+# address the node no longer has. Regenerating here keeps it honest.
 # -------------------------------------------------------------------
 WEB_ROOT="/var/www/localhost/htdocs"
 if [ -d "$WEB_ROOT" ]; then
@@ -119,7 +119,7 @@ if [ -d "$WEB_ROOT" ]; then
   <table>
     <tr><td>Hostname</td><td>${HOSTNAME}</td></tr>
     <tr><td>IP Address</td><td>${IP}</td></tr>
-    <tr><td>Router</td><td>${ROUTER_NAME}</td></tr>
+    <tr><td>Group</td><td>${GROUP_NAME}</td></tr>
     <tr><td>Subnet</td><td>${SUBNET}</td></tr>
     <tr><td>Updated</td><td>$(date -u '+%Y-%m-%dT%H:%M:%SZ')</td></tr>
   </table>
@@ -131,7 +131,7 @@ fi
 # -------------------------------------------------------------------
 # Agent self-update.
 #
-# The hub is the single place agent scripts are edited; every VM converges
+# The hub is the single place agent scripts are edited; every node converges
 # here on its 5-minute run. A bad push would otherwise break the whole mesh
 # at once, so an update is only accepted when it clears three gates:
 #
@@ -140,9 +140,9 @@ fi
 #   3. for test-cycle.sh, a real run of the new script succeeds
 #
 # The previous version is kept as .known-good and restored if gate 3 fails,
-# so a VM can never be left running a script that does not work.
+# so a node can never be left running a script that does not work.
 #
-# Set AGENT_AUTOUPDATE=false in the config to opt a VM out entirely.
+# Set AGENT_AUTOUPDATE=false in the config to opt a node out entirely.
 # -------------------------------------------------------------------
 AGENT_AUTOUPDATE="${AGENT_AUTOUPDATE:-true}"
 
@@ -230,8 +230,8 @@ update_script() {
 # Only test-cycle.sh auto-updates.
 #
 # register.sh is the updater itself, so a version of it that passes `sh -n`
-# but fails at runtime would stop the VM registering *and* disable the
-# mechanism that would otherwise repair it — every VM would need fixing by
+# but fails at runtime would stop the node registering *and* disable the
+# mechanism that would otherwise repair it — every node would need fixing by
 # hand, which is the exact opposite of what self-update is for. There is also
 # no equivalent of the gate-3 verification run for it: running register.sh to
 # test register.sh is circular.

@@ -1,56 +1,51 @@
-# Lab Tester — Network Topology
+# Lab Tester — System Topology
 
 Visual companion to the architecture in `CLAUDE.md` and the build order in
-`DEPLOYMENT.md`. Shows the same pattern as `docs/csr-example-r1.cfg` for two
-routers; that file's own neighbor list additionally peers with a third (R3)
-since it's written for a larger mesh. Scales the same way to more routers.
+`DEPLOYMENT.md`. The network between nodes is drawn as one opaque cloud
+deliberately — this project tests that path, it does not configure it.
+Whatever routers, switches, or firewalls make up that cloud are the concern
+of a separate project.
 
 ```mermaid
 flowchart LR
-    IR1["Inside-R1<br/>(test-r1)"]
-    IR2["Inside-R2<br/>(test-r2)"]
+    N1["Node 1<br/>(subnet A)"]
+    N2["Node 2<br/>(subnet B)"]
+    N3["Node N<br/>(subnet ...)"]
 
-    R1["R1"]
-    R2["R2"]
+    Net(("Network under test<br/>(opaque)"))
 
-    HubNIC1["Hub NIC1<br/>HUB_URL"]
-    HubNIC2["Hub NIC2<br/>mgmt IP"]
+    Hub["Hub<br/>HUB_URL"]
 
-    IR1 --- R1
-    IR2 --- R2
+    N1 <--> Net
+    N2 <--> Net
+    N3 <--> Net
 
-    R1 <-->|"eBGP full mesh (Outside-shared)"| R2
+    N1 -.->|register / results| Hub
+    N2 -.->|register / results| Hub
+    N3 -.->|register / results| Hub
 
-    R1 -.->|register / results| HubNIC1
-    R2 -.->|register / results| HubNIC1
-
-    R1 -.->|syslog / NTP| HubNIC2
-    R2 -.->|syslog / NTP| HubNIC2
-    HubNIC2 -.->|SNMP poll| R1
-    HubNIC2 -.->|SNMP poll| R2
+    Net -.->|syslog, optional| Hub
 ```
-
-![Lab-tester topology](img/topology.png)
 
 ## Reading it
 
-- **Level 1 — Inside subnets.** Each router's own inside subnet with its
-  test VM (`test-r1`, `test-r2`).
-- **Level 2 — Routers.** R1/R2 peer directly over Outside-shared via eBGP,
-  one AS per router, no IGP underneath — peering breaks exactly when that
-  segment breaks, which is the path this lab exists to test.
-- **Level 3 — Hub interfaces.** Two separate NICs, two separate purposes:
-  - **Hub NIC1** (`HUB_URL`, reachable via Outside-shared / global table) —
-    where VMs register (`POST /register`) and push results (`POST /results`).
-  - **Hub NIC2** (mgmt IP, reachable via VRF MGMT) — where routers send
-    syslog and NTP (both explicitly `vrf MGMT`, see `docs/csr-baseline.cfg`),
-    and where the hub polls each router's SNMP agent the other direction,
-    over the same VRF.
-- **The two hub NICs are deliberately unconnected** — no route leaking
-  between the global table and VRF MGMT. A VM on an inside subnet has no
-  path to anything in the Management VLAN, and vice versa. See
-  `docs/csr-example-r1.cfg` and the acceptance check in `DEPLOYMENT.md`
-  ("no management IPs in the hop list").
+- **Nodes** sit on whatever subnets the lab defines, one per segment under
+  test. Each registers with the hub and pushes results over HTTP — that
+  channel is independent of, and does not need to traverse, the same path
+  the tests themselves exercise.
+- **The network under test** is everything between the nodes: however many
+  hops, whatever vendor, however it's configured. Lab Tester treats it as a
+  black box and measures what comes out the other side — HTTP, SSH, SMB,
+  SMTP, iperf3, loss/jitter, path MTU, traceroute.
+- **Syslog is optional and one-way.** Any device in that network *may* be
+  configured to send its syslog to the hub's UDP/514 listener, which lets a
+  failing pair in the matrix be read next to what the network said at that
+  moment. Nothing here requires it, and the hub never reaches into the
+  network to poll or configure anything.
+- **The hub** is infrastructure only — it never appears as a node in the
+  matrix, and its own reachability from the nodes does not require it to sit
+  inside the network under test.
 
-Scales to more routers by repeating the R*/Inside-R* pattern on the left and
-adding one eBGP neighbor pair per new router.
+Scales to more nodes and more segments by repeating the pattern on the left;
+the cloud in the middle does not grow more legs on this diagram no matter how
+complex the real topology gets.

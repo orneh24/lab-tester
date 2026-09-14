@@ -1,7 +1,17 @@
 # Lab Tester — Network End-to-End Connectivity Testing
 
 ## Project Overview
-A lightweight system for testing end-to-end connectivity between hosts on the "inside" interfaces of virtualized Cisco CSR1000v routers in a R&S lab. Goes beyond ICMP — validates real TCP connections (HTTP, SSH, SMB, SMTP, iperf3), packet loss/jitter, path MTU, DNS resolution and traceroute, polls the routers' own SNMP counters, and visualizes results on a web dashboard.
+A lightweight system for testing end-to-end connectivity between hosts —
+"nodes" — on a network. Goes beyond ICMP — validates real TCP connections
+(HTTP, SSH, SMB, SMTP, iperf3), packet loss/jitter, path MTU, DNS resolution
+and traceroute, and visualizes results on a web dashboard. The hub also
+optionally receives syslog from network devices on the path, so a failure in
+the matrix can be read next to what those devices logged at the same moment.
+
+The scope of this project is the Hub and the Node only. Router/switch design,
+configuration, and deployment belong to a separate project — this system
+treats the network between nodes as an opaque path it tests, not something it
+configures.
 
 ## Architecture
 
@@ -10,7 +20,7 @@ Diagram: `docs/TOPOLOGY.md`.
 ### Hub VM (standalone)
 - Alpine Linux VM, ~192 MB RAM
 - NOT a test participant — purely infrastructure
-- Sits on a segment routable from all inside subnets and the workstation
+- Sits on a segment routable from all node subnets and the workstation
 - Static IP (helper: `set-static-ip <ip/cidr> <gateway>`)
 - Runs:
   - Flask API (registry + result collector) served by **waitress**, not the
@@ -19,16 +29,12 @@ Diagram: `docs/TOPOLOGY.md`.
   - SQLite database (WAL mode) at `/var/lib/lab-tester/hub.db`
   - Web dashboard on **port 80**
   - UDP syslog receiver on **port 514**, in a daemon thread (see Syslog below)
-  - SNMP poller, in a daemon thread, opt-in (see SNMP polling below)
-  - Config file download server (`lab-tester-serve`, busybox httpd) on
-    **port 8080**, its own OpenRC service, always on — see Config file
-    server below
 - Installed to `/opt/lab-tester-hub/`, started by OpenRC service `lab-tester-hub`
 - Entrypoint is `serve.py` — it reads `HUB_PORT` at runtime. Do not move the
   port into the init script's `command_args`: OpenRC expands that at parse
   time, before `start_pre` sources `hub.env`, so the setting would be ignored.
 - API endpoints:
-  - `POST /register` — hostname, ip, subnet, router
+  - `POST /register` — hostname, ip, subnet, group_name
   - `GET /endpoints` — mesh list (prunes stale endpoints as a side effect)
   - `POST /results` — result batch (runs the retention sweep as a side effect)
   - `GET /api/results?minutes=N`, `GET /api/results/<source>/<target>`
@@ -49,9 +55,6 @@ Diagram: `docs/TOPOLOGY.md`.
     load average, memory, disk, uptime. Same never-500 discipline as
     `/api/time` — a check that can't run (e.g. `rc-service` missing) reports
     `null`/a reason rather than failing the page
-  - `GET|POST /snmp/targets`, `DELETE /snmp/targets/<name>` — routers to poll
-  - `GET /api/snmp?router=&minutes=`, `GET /api/snmp/sources` — polled
-    interface counters, for the "Router SNMP" dashboard panel
 
 ### Test types
 `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`, `smb`, `loss`, `smtp`.
@@ -71,16 +74,17 @@ hard failure would defeat that (same philosophy `pmtu` already uses for a
 partial/bracketed result).
 
 `smtp` catches what `smb` can't: a device that **passes** traffic while
-**rewriting** it. Cisco's ESMTP inspection / ASA ESMTP fixup masks
-unrecognised capability verbs (e.g. `STARTTLS`) with runs of `X`, so
-`250-XXXXXXXX` in the recorded `output` means an ALG is editing the session
-in flight, not blocking it. The probe never issues `DATA` — it holds a real
-envelope conversation (`EHLO` → `MAIL FROM:<>` → `RCPT TO:<probe@lab.invalid>`
-→ `RSET` → `QUIT`) and aborts before any message exists. `success` gates on
-the banner + `EHLO` response only, never on `RCPT`: a real relay correctly
-rejects `RCPT TO:<probe@lab.invalid>` with `550`, and that must not paint a
-healthy relay red — the response codes are data in `output`, same philosophy
-as `loss`/`pmtu`. The static-target arm is deliberately **ungated** (unlike
+**rewriting** it. An SMTP ALG / ESMTP inspection engine — common on
+firewalls and NAT gateways — masks unrecognised capability verbs (e.g.
+`STARTTLS`) with runs of `X`, so `250-XXXXXXXX` in the recorded `output`
+means an inspection engine is editing the session in flight, not blocking
+it. The probe never issues `DATA` — it holds a real envelope conversation
+(`EHLO` → `MAIL FROM:<>` → `RCPT TO:<probe@lab.invalid>` → `RSET` → `QUIT`)
+and aborts before any message exists. `success` gates on the banner + `EHLO`
+response only, never on `RCPT`: a real relay correctly rejects
+`RCPT TO:<probe@lab.invalid>` with `550`, and that must not paint a healthy
+relay red — the response codes are data in `output`, same philosophy as
+`loss`/`pmtu`. The static-target arm is deliberately **ungated** (unlike
 `smb`'s): registering a target is already an explicit opt-in, and the client
 side cannot send mail regardless of `ENABLE_SMTP`, so requiring a local mail
 daemon just to probe a real external relay would be pure friction. See
@@ -89,27 +93,30 @@ constraint 21 for why this can never become an open relay.
 `smb` is SMB-shaped rather than ICMP-shaped on purpose: it is the protocol
 most likely to be broken by an inspection policy, an MSS/MTU problem
 mid-transfer, or a NAT path that passes short flows but not a sustained one.
-Every VM runs `smbd` exporting one read-only share and pulls a fixed probe
+Every node runs `smbd` exporting one read-only share and pulls a fixed probe
 file from every peer with `smbclient`. Full mesh, like the other tests — not
 client-only against static targets.
 
-`pmtu` is the one that earns its place in a CSR lab: it sends with DF set at
-a real payload size, which is the only test here that catches a tunnel where
-the peering is up and small packets pass but large transfers hang. On failure
-it steps down through common sizes to bracket where the path breaks.
+`pmtu` catches what nothing else here does: it sends with DF set at a real
+payload size, which is the only test here that catches a path where peering
+is up and small packets pass but large transfers hang. On failure it steps
+down through common sizes to bracket where the path breaks.
 
 ### Static targets
-Addresses that run no agent — router loopbacks, outside hosts — held on the
-hub in the `targets` table and merged into every VM's cycle. Each declares
-which tests apply, since a loopback answers traceroute and PMTU but has no
-HTTP server. Configured once on the hub rather than per VM.
+Addresses that run no agent — gateways, device loopbacks, outside hosts —
+held on the hub in the `targets` table and merged into every node's cycle.
+Each declares which tests apply, since a loopback answers traceroute and
+PMTU but has no HTTP server. Configured once on the hub rather than per
+node.
 
 ### Syslog
-The hub receives Cisco/RFC3164 syslog over UDP/514 and stores it in the
-`syslog` table of the same SQLite database, so a failing pair in the matrix can
-be read next to what the routers said in that minute. Correlation is the whole
-reason it exists; without it the matrix tells you *that* a path broke and
-nothing about why.
+The hub can optionally receive Cisco/RFC3164-style syslog over UDP/514 from
+network devices on the path between nodes, and stores it in the `syslog`
+table of the same SQLite database, so a failing pair in the matrix can be
+read next to what those devices said in that minute. Correlation is the
+whole reason it exists; without it the matrix tells you *that* a path broke
+and nothing about why. Nothing here requires it — a lab with no devices
+configured to log to the hub simply has an empty `/syslog`.
 
 - Receiver is `hub/app/syslog_server.py`, started by `serve.py` in a daemon
   thread. `start()` is idempotent and returns quietly if it cannot bind — the
@@ -119,15 +126,17 @@ nothing about why.
   1024 for those.
 - Parsing is best-effort and **never** discards. An unrecognised line is stored
   with its raw text and a null host/severity, because the line you cannot parse
-  is often the one you most need to see.
+  is often the one you most need to see. The parser recognises the Cisco-style
+  origin-id and `%FAC-SEV-MNEMONIC` framing many network vendors emit, but
+  falls back to storing the raw line unparsed for anything else.
 - Severity comes from the PRI header when present, else from the mnemonic's
   middle digit. `severity=N` filters *at or worse than* N (lower is more
-  severe), matching how the filter reads on a router. Rows with a **null
-  severity are always kept**, whatever the filter: the parser is written never
-  to discard a line it cannot read, and filtering it away at query time would
-  undo that at the only point where anyone would notice.
+  severe), matching how the filter reads on most network devices. Rows with a
+  **null severity are always kept**, whatever the filter: the parser is
+  written never to discard a line it cannot read, and filtering it away at
+  query time would undo that at the only point where anyone would notice.
 - Bounded by a **row cap** (`HUB_SYSLOG_MAX_ROWS`, default 300000), enforced
-  every 500 inserts by an indexed delete on `id`. Not a time window: a router
+  every 500 inserts by an indexed delete on `id`. Not a time window: a device
   at debug level outpaces any retention period, so rows are what must be
   bounded.
 - **Not an audit trail.** UDP is lossy and unauthenticated — anything on the
@@ -136,24 +145,24 @@ nothing about why.
 - The listener's connection runs `synchronous=NORMAL`; the Flask side keeps
   the default. One commit per datagram at `FULL` means an fsync before the
   next `recvfrom` on a single-threaded drain, which measured ~500 msg/s — well
-  inside what a router at debug level produces, so the listener became the
+  inside what a device at debug level produces, so the listener became the
   bottleneck rather than the network. `NORMAL` is safe under WAL (a crash can
   lose the last transactions, not corrupt the file), and losing the tail of a
   troubleshooting log to a hub crash is an acceptable trade that losing
   *results* would not be.
-- A `word:` prefix is only read as an origin-id when a Cisco timestamp or a
-  `%MNEMONIC` follows it. Otherwise `kernel: out of memory` files itself under
-  host `kernel`, which then appears as its own device in the source filter and
-  hides real messages behind a name nobody recognises.
+- A `word:` prefix is only read as an origin-id when a Cisco-style timestamp
+  or a `%MNEMONIC` follows it. Otherwise `kernel: out of memory` files itself
+  under host `kernel`, which then appears as its own device in the source
+  filter and hides real messages behind a name nobody recognises.
 
 **Correlation from the dashboard.** The drill-down carries the moment across:
 each test card links to `/syslog` pinned to ±5 min around *that sample*, and
-the pair header links to the same window plus one link per router behind the
-pair. Router links filter on `host`, which is the name the device puts in its
-own messages — **not** `guestinfo.lab.router`. Where those differ the filtered
+the pair header links to the same window plus one link per group behind the
+pair. Group links filter on `host`, which is the name the device puts in its
+own messages — **not** `guestinfo.lab.group`. Where those differ the filtered
 link comes back empty while the unfiltered window beside it still works, which
 is the intended failure: an empty view rather than a wrong one. The hub does
-not maintain an IP→router map.
+not maintain an IP→device map.
 
 **The clock is shown because the pinning depends on it.** `/api/time` reports
 chrony's tracking state in the syslog header. A ±5 min window around a
@@ -164,76 +173,17 @@ correlation.
 Config: `HUB_SYSLOG_ENABLED`, `HUB_SYSLOG_BIND`, `HUB_SYSLOG_PORT`,
 `HUB_SYSLOG_MAX_ROWS`, `HUB_BUSY_TIMEOUT_MS`.
 
-### SNMP polling
-Opt-in (`HUB_SNMP_ENABLED`, default `false`). A daemon thread
-(`hub/app/snmp_poller.py`) polls each router in the `snmp_targets` table
-every `HUB_SNMP_POLL_INTERVAL` (default 60s): `sysName` plus, per interface,
-octets/errors/discards. Stored in `snmp_metrics`, rendered on the dashboard's
-"Router SNMP" panel — not part of the pair matrix, since this has nothing to
-do with VM test results. Retention is age-based (`HUB_SNMP_RETENTION_HOURS`),
-swept at the end of each poll round inside the same thread — not a violation
-of "no cron on the hub" (see Retention below), since the poller is its own
-trigger.
-
-The routers already ship the SNMP side of this (`docs/csr-baseline.cfg`):
-a read-only community restricted by ACL to the hub's management IP, and
-`snmp-server ifindex persist` so counters trend correctly across a reload.
-Polling closes a gap noted under Syslog above: **the hub gains its first
-real IP→router-name mapping**, from each router's own `sysName`, alongside
-the operator-assigned name in `snmp_targets`.
-
-**Every outgoing SNMP packet must be source-bound to `HUB_MGMT_IP`, never
-whatever interface the OS route table would otherwise pick.** This is the
-one non-negotiable part of the design — the routers' SNMP ACL only answers
-the management IP, and a request sent from the wrong interface would just
-be dropped, silently, with no obvious cause. `HUB_MGMT_IP` has no default:
-if `HUB_SNMP_ENABLED=true` and it's unset, the poller refuses to start and
-logs loudly, rather than guessing an interface. This is why
-`hub/app/snmp_client.py` is a small hand-rolled stdlib-only SNMPv2c client
-(`socket.bind((HUB_MGMT_IP, 0))` before every send) rather than shelling out
-to the `net-snmp` CLI tools, which don't reliably expose a local-source-bind
-flag across versions — using them here would risk silently defeating the
-one requirement that matters.
-
-Same never-crash discipline as `/api/health`: a router that times out or
-errors gets a `status` row, never takes down the poller thread. The
-poller's own SQLite connection needs `busy_timeout` too — it's a *third*
-writer against `hub.db`, after the results API and the syslog listener.
-
-Config: `HUB_SNMP_ENABLED`, `HUB_MGMT_IP`, `HUB_SNMP_COMMUNITY`,
-`HUB_SNMP_POLL_INTERVAL`, `HUB_SNMP_TIMEOUT_S`, `HUB_SNMP_RETENTION_HOURS`.
-
-### Config file server
-`lab-tester-serve` — busybox httpd, read-only, always on, serving
-`/srv/lab-tester-configs/` on port 8080. Bound to `0.0.0.0` deliberately:
-unlike SNMP polling (which must go *out* the management NIC specifically),
-this is a router pulling *in*, and it may not have its management-VLAN
-interface configured yet when it needs a config. Directory listing is
-busybox httpd's automatic behaviour for a path with no `index.html` — never
-place one in the served directory, or the listing stops rendering.
-
-`publish-config <file>` (on the hub) is the only write path — the web server
-itself never writes. It copies the file in, then prints the URL, the MD5,
-and the router-side commands: `copy http://<hub>:8080/<file> flash:` →
-`verify /md5` → `reload in 5` (safety net) → `configure replace` → `reload
-cancel`. Never `copy <url> running-config` — that merges into the running
-config instead of replacing it.
-
-Config: `/etc/conf.d/lab-tester-serve` (`SERVE_BIND`, `SERVE_PORT`,
-`SERVE_DIR`) — OpenRC sources this automatically for a service named
-`lab-tester-serve`, no explicit sourcing code needed.
-
 ### Agent self-update
 The hub serves `test-cycle.sh` and `register.sh` from
-`/opt/lab-tester-hub/agent/`; VMs converge on their 5-minute registration run.
+`/opt/lab-tester-hub/agent/`; nodes converge on their 5-minute registration run.
 Checksums are computed on demand, so editing a file there is the whole
 deploy — no rebuild step. Three gates before anything is trusted: sha256
 match, `sh -n`, and (for test-cycle.sh) a successful real run. The prior
-version is kept as `.known-good` and restored if that run fails. Opt a VM out
+version is kept as `.known-good` and restored if that run fails. Opt a node out
 with `AGENT_AUTOUPDATE=false`.
 
-### Test VMs (one per router inside subnet)
-- Alpine Linux VM, ~128 MB RAM, DHCP on the router's inside interface
+### Node (one per network segment under test)
+- Alpine Linux VM, ~128 MB RAM, DHCP on its interface
 - Installed to `/usr/local/bin/lab-tester/`, config at `/etc/lab-tester/config`
 - Servers: dropbear (SSH), busybox httpd via OpenRC service **`lab-httpd`**,
   iperf3, `smbd` via OpenRC service **`lab-smbd`** (opt-in, `ENABLE_SMB`),
@@ -244,8 +194,8 @@ with `AGENT_AUTOUPDATE=false`.
 
 ### Discovery
 - Hub is the registry — single source of truth
-- Hub URL comes from guestinfo / config; test VMs register on boot and every 5 min
-- Test VMs pull the endpoint list before each cycle
+- Hub URL comes from guestinfo / config; nodes register on boot and every 5 min
+- Nodes pull the endpoint list before each cycle
 - Endpoints unseen for `HUB_STALE_ENDPOINT_HOURS` (default 6) are dropped
 
 ## Infrastructure
@@ -256,14 +206,8 @@ with `AGENT_AUTOUPDATE=false`.
 - `chrony` on all VMs — the hub's clock is the mesh reference
 - `lldpd` on both roles, always-on, not gated by any `ENABLE_*` flag — LLDP
   neighbor discovery for troubleshooting (e.g. `lldpcli show neighbors` to
-  confirm which router/port a VM actually landed on). Not a test participant:
-  it has no result type and never appears in the matrix.
-- The hub is meant to be **multi-homed** once SNMP polling is enabled: one
-  NIC on the data-plane segment it already sits on (results, dashboard,
-  syslog), one on the Management VLAN the routers' SNMP ACL is restricted
-  to (`HUB_MGMT_IP`). A single-NIC hub is fine with SNMP left off
-  (`HUB_SNMP_ENABLED=false`, the default); a second NIC is a manual add —
-  `set-static-ip` manages one interface only.
+  confirm which switch/port a node actually landed on). Not a test
+  participant: it has no result type and never appears in the matrix.
 
 ## Per-VM configuration: guestinfo
 vCenter does not expose the VM display name to the guest. Instead, custom
@@ -272,18 +216,21 @@ keys set on the VM are read in-guest via `vmware-rpctool "info-get <key>"`:
 | Key | Example |
 |-----|---------|
 | `guestinfo.lab.hub_url` | `http://10.0.0.100` |
-| `guestinfo.lab.router` | `R1` |
+| `guestinfo.lab.group` | `site-a` |
 | `guestinfo.lab.subnet` | `10.1.1.0/24` |
-| `guestinfo.lab.hostname` | `test-r1` (optional) |
+| `guestinfo.lab.hostname` | `test-site-a` (optional) |
 | `guestinfo.lab.dns_server` | `10.0.0.53` (optional; unset skips the DNS test) |
 | `guestinfo.lab.dns_query` | `example.com` (optional) |
 
 Precedence in `setup.sh`: **guestinfo → environment → prompt**.
-If hostname is omitted it is derived as `<HOSTNAME_PREFIX>-<router-slug>`.
+If hostname is omitted it is derived as `<HOSTNAME_PREFIX>-<group-slug>`.
+`group` is an arbitrary operator-chosen label — it clusters nodes on the
+dashboard and filters syslog by sender; it carries no network-topology
+meaning to the hub.
 
-The table above is read by the test VMs. The **hub** has its own, smaller
+The table above is read by the nodes. The **hub** has its own, smaller
 set, read by `lab-tester-hub-firstboot` (`hub/services/firstboot.initd`) and
-set on the hub's own VM object, not the test VMs':
+set on the hub's own VM object, not the nodes':
 
 | Key | Example |
 |-----|---------|
@@ -291,7 +238,7 @@ set on the hub's own VM object, not the test VMs':
 | `guestinfo.hub.gateway` | `10.0.0.1` |
 
 Both optional — with neither present, the firstboot service stands down
-(same reasoning as the test VMs: no reliable tty inside an OpenRC `start()`
+(same reasoning as the nodes: no reliable tty inside an OpenRC `start()`
 to prompt from) and `hub-setup.sh` prompts interactively at first login
 instead (`hub/scripts/hub-setup.sh`, invited by `hub/services/login-setup.sh`).
 
@@ -301,16 +248,14 @@ hub/
   build-template.sh   — builds the hub golden template
   serve.py            — production entrypoint (reads HUB_PORT at runtime)
   run.sh              — foreground launcher for debugging
-  app/                — Flask API (app.py, config.py, syslog_server.py,
-                        snmp_client.py, snmp_poller.py)
+  app/                — Flask API (app.py, config.py, syslog_server.py)
   templates/          — dashboard.html, syslog.html
   static/
-  agent/              — scripts served to test VMs (created at build time)
-  services/           — firstboot.initd, login-setup.sh,
-                        serve.initd (lab-tester-serve), serve.conf
+  agent/              — scripts served to nodes (created at build time)
+  services/           — firstboot.initd, login-setup.sh
   scripts/            — hub-setup.sh
-test-vm/
-  build-template.sh   — builds the test-vm golden template
+node/
+  build-template.sh   — builds the node golden template
   scripts/            — register.sh, test-cycle.sh, setup.sh
   services/           — httpd.initd (lab-httpd), iperf3.initd,
                         smbd.initd (lab-smbd), smb.conf,
@@ -318,17 +263,11 @@ test-vm/
                         lab-tester-httpd.conf, logrotate.conf,
                         firstboot.initd (lab-tester-firstboot)
   config.sample
-deploy/
-  deploy-routers.ps1        — PowerCLI: deploys bare CSR1000v VMs from a
-                              manifest (sizing + 3-vNIC mapping only, no
-                              config — see docs/DEPLOYMENT.md stage 1)
-  lab-manifest.sample.ps1   — placeholder deploy manifest, copy to
-                              lab-manifest.ps1 (gitignored) with real values
 docs/BUILD_GUIDE.md
 ```
 
 ## Design Decisions
-- Pull-based/cron: each VM tests independently and pushes results
+- Pull-based/cron: each node tests independently and pushes results
 - Hub is standalone: collects and displays, never participates
 - Shared registry over HTTP: no NFS, exercises the same stack being tested
 - Alpine Linux: ~128 MB RAM, fast boot, good package ecosystem
@@ -348,9 +287,9 @@ These were live bugs that a review caught; each has a comment at the site.
 
 1. **Hostnames must be unique per clone.** `endpoints.hostname` is the PRIMARY
    KEY, so duplicate names make clones overwrite each other and the mesh
-   collapses to one entry — which every VM then skips as "self". `setup.sh`
+   collapses to one entry — which every node then skips as "self". `setup.sh`
    sets the hostname; the template ships as `lab-tester-template`.
-2. **Timestamps: the hub stamps `received_at` and filters on that.** Test VMs
+2. **Timestamps: the hub stamps `received_at` and filters on that.** Nodes
    send ISO-8601 (`2026-09-09T08:00:00Z`); SQLite's `datetime('now', ...)`
    yields `2026-09-09 18:04:04`. String-comparing them is wrong because `T`
    (0x54) sorts above space (0x20), so any same-day row passes any window.
@@ -371,7 +310,7 @@ These were live bugs that a review caught; each has a comment at the site.
 7. **iperf3 serves one client at a time.** Contention is retried once, then
    reported as skipped rather than failed — and a skipped run emits no JSON,
    so the caller must not append it blindly (trailing comma → invalid JSON).
-8. **Retention is not optional.** ~100k result rows/day at 5 VMs. The sweep
+8. **Retention is not optional.** ~100k result rows/day at 5 nodes. The sweep
    runs opportunistically on each `POST /results`; there is no cron on the hub.
 9. **Never build `latency_ms` with `printf '%d000'`.** A sub-second test then
    emits `0000`, and JSON forbids leading zeros in numbers. `jq` accepts it
@@ -394,7 +333,7 @@ These were live bugs that a review caught; each has a comment at the site.
    reports how many periodic entries survived.
 13. **Only `test-cycle.sh` auto-updates.** register.sh is the updater; a copy
    of it that parses but fails at runtime would stop registration *and*
-   disable the mechanism that would repair it, bricking every VM at once.
+   disable the mechanism that would repair it, bricking every node at once.
    There is also no non-circular way to verify it. Push register.sh changes
    deliberately.
 14. **Package selection on Alpine is load-bearing** (verified against the
@@ -431,7 +370,7 @@ These were live bugs that a review caught; each has a comment at the site.
 16. **The first-boot service stands down without guestinfo.** `setup.sh`
    prompts interactively, so auto-running it with no keys present would block
    the boot forever waiting on input. It checks for `lab.hub_url` and
-   `lab.router` first and redirects to `/dev/null`.
+   `lab.group` first and redirects to `/dev/null`.
 17. **The syslog listener is a second writer, so `busy_timeout` is required.**
    It writes to the same SQLite file as the results API from its own thread.
    WAL permits one writer at a time; without a busy timeout on *both*
@@ -450,7 +389,7 @@ These were live bugs that a review caught; each has a comment at the site.
    `r.get("target_ip", "")` returns the default only when the key is *absent*;
    `{"target_ip": null}` yields `None`, which violates the column's `NOT NULL`
    and raises `IntegrityError`. The commit never runs, so **every other row in
-   that batch is discarded too** and the VM gets a 500 naming none of them —
+   that batch is discarded too** and the node gets a 500 naming none of them —
    constraint 9's whole-batch loss arriving by a different route. `push_results`
    coerces with an explicit None check, not a `.get` default, and rejects a
    non-object body or record with a 400 rather than an AttributeError 500.
@@ -458,7 +397,7 @@ These were live bugs that a review caught; each has a comment at the site.
    on a UDP socket does not reliably reject a duplicate bind on Linux: two
    sockets that both set it can hold the same port, and the kernel then hands
    each datagram to only one of them. Running `run.sh` while the service is up
-   would split the routers' messages between two processes writing to two
+   would split incoming device messages between two processes writing to two
    databases — a log with silent holes, which is worse than a listener that
    refuses to start. Leaving it off makes the second bind fail with
    `EADDRINUSE`, which is what `start()` is written to expect.
@@ -469,8 +408,7 @@ These were live bugs that a review caught; each has a comment at the site.
    action, so the `cp -f` that installs our own config in
    `build-template.sh` is load-bearing; a build-time `grep` for a `relay`
    action is the safety net if that copy ever silently fails. This isn't
-   theoretical: `docs/csr-example-r1.cfg` configures NAT overload plus a
-   default route to an internet gateway, so a test VM genuinely has a path
-   off the lab — "it's an isolated lab" is not a valid defence for this one.
+   theoretical: a node may sit behind NAT with a real default route to the
+   internet, so "it's an isolated lab" is not a valid defence for this one.
    The probe client never issues `DATA` either, so even a real external
    relay registered as a static target can't have mail sent through it.

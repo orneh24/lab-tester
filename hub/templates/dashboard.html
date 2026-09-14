@@ -99,7 +99,7 @@ a:hover { text-decoration: underline; }
 
 /* Main column: mesh matrix, static targets, DNS.
    Sections size to their content rather than one panel stretching to fill
-   the viewport, which previously left most of the page empty at 5 VMs. */
+   the viewport, which previously left most of the page empty at 5 nodes. */
 .main-col {
     grid-column: 1;
     grid-row: 1 / 3;
@@ -291,7 +291,7 @@ a:hover { text-decoration: underline; }
 }
 .ep-table tr:hover td { background: var(--bg-hover); }
 .ep-table .stale td { color: var(--yellow); }
-.ep-table .router-badge {
+.ep-table .group-badge {
     display: inline-block;
     background: #1a2332;
     border: 1px solid #253040;
@@ -455,51 +455,6 @@ a:hover { text-decoration: underline; }
 .health-bar-fill.warn { background: var(--yellow); }
 .health-bar-fill.bad  { background: var(--red); }
 
-/* SNMP */
-.snmp-router {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    margin-bottom: 10px;
-    overflow: hidden;
-}
-.snmp-router-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 10px;
-    background: var(--bg);
-    font-size: 12px;
-}
-.snmp-router-name { font-weight: 600; }
-.snmp-router-sysname { color: var(--text-dim); font-size: 11px; margin-left: 8px; }
-.snmp-status-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 3px;
-}
-.snmp-status-badge.ok      { background: var(--green-bg); color: var(--green); }
-.snmp-status-badge.timeout,
-.snmp-status-badge.error   { background: var(--red-bg); color: var(--red); }
-.snmp-status-badge.unknown { background: #21262d; color: var(--text-dim); }
-.snmp-btn-delete {
-    background: none; border: none; color: var(--red); cursor: pointer;
-    font-size: 13px; padding: 0 4px; opacity: 0.5;
-}
-.snmp-btn-delete:hover { opacity: 1; }
-.snmp-if-table { width: 100%; border-collapse: collapse; }
-.snmp-if-table th {
-    text-align: left; font-size: 9px; font-weight: 600; color: var(--text-dim);
-    text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px;
-    border-bottom: 1px solid var(--border);
-}
-.snmp-if-table td {
-    padding: 3px 8px; font-size: 11px; border-bottom: 1px solid #21262d;
-    white-space: nowrap;
-}
-.snmp-flag { color: var(--red); font-weight: 700; }
-.snmp-error-detail { padding: 6px 10px; font-size: 11px; color: var(--red); }
-
 /* Legend */
 .legend {
     display: flex;
@@ -577,8 +532,8 @@ a:hover { text-decoration: underline; }
                 </table>
                 <div class="empty-hint" id="targets-empty">
                     No static targets configured.
-                    Add a router loopback or an outside address to test reachability
-                    to things that run no agent.
+                    Add a gateway, an outside host, or a device loopback to test
+                    reachability to things that run no agent.
                 </div>
             </div>
         </div>
@@ -594,30 +549,8 @@ a:hover { text-decoration: underline; }
                     <tbody></tbody>
                 </table>
                 <div class="empty-hint" id="dns-empty">
-                    No DNS tests running. Set <code>DNS_SERVER</code> in a test VM's
+                    No DNS tests running. Set <code>DNS_SERVER</code> in a node's
                     config, or add a static target with the <code>dns</code> test.
-                </div>
-            </div>
-        </div>
-
-        <!-- SNMP: router interface counters polled by the hub itself, not
-             the VM mesh — no source/target pair, no test_type, so this has
-             nothing to do with the matrix above. Compact per-router status,
-             closer in shape to Hub Health than to the syslog page. -->
-        <div class="section" id="snmp-section">
-            <div class="section-header">
-                <span>Router SNMP</span>
-                <span class="hdr-actions">
-                    <button class="btn-small" id="btn-add-snmp-target">+ add router</button>
-                </span>
-            </div>
-            <div class="section-body">
-                <div id="snmp-list"></div>
-                <div class="empty-hint" id="snmp-empty" style="display:none">
-                    No SNMP targets configured. Add a router's management IP to poll
-                    interface counters (errors, discards, throughput) over SNMPv2c.
-                    Polling only runs if the hub was started with
-                    <code>HUB_SNMP_ENABLED=true</code> and <code>HUB_MGMT_IP</code> set.
                 </div>
             </div>
         </div>
@@ -653,7 +586,7 @@ a:hover { text-decoration: underline; }
                         <tr>
                             <th>Host</th>
                             <th>IP</th>
-                            <th>Router</th>
+                            <th>Group</th>
                             <th>Seen</th>
                             <th></th>
                         </tr>
@@ -792,7 +725,7 @@ a:hover { text-decoration: underline; }
     // separate from the mesh "health summary" below which is about test
     // results. Follows the same fetch/poll/catch/empty-state pattern as
     // loadClock(): a failure here degrades to an empty-state panel, never
-    // a thrown error, since this is meant to keep working on a flaky VM.
+    // a thrown error, since this is meant to keep working on a flaky node.
     // ---------------------------------------------------------------
     function pctBarClass(pct) {
         if (pct === null || pct === undefined) return "";
@@ -875,140 +808,6 @@ a:hover { text-decoration: underline; }
                 document.getElementById("health-empty").style.display = "";
             });
     }
-
-    // ---------------------------------------------------------------
-    // SNMP — router interface counters polled by the hub itself. Nothing
-    // here belongs in the matrix: there is no source/target pair, and the
-    // per-router "is it answering" question is closer to Hub Health than
-    // to a test result. Same never-throw discipline as loadHealth(): a
-    // fetch failure degrades to the empty-state hint, not a stuck panel.
-    // ---------------------------------------------------------------
-    function snmpCount(n) {
-        if (n === null || n === undefined) return "<span class='dim'>?</span>";
-        return n > 0 ? "<span class='snmp-flag'>" + n + "</span>" : String(n);
-    }
-
-    function loadSNMP() {
-        Promise.all([
-            fetchJSON("/snmp/targets"),
-            fetchJSON("/api/snmp/sources"),
-            fetchJSON("/api/snmp?minutes=15")
-        ]).then(function(arr) {
-            renderSNMP(arr[0], arr[1], arr[2]);
-        }).catch(function() {
-            document.getElementById("snmp-list").innerHTML = "";
-            var empty = document.getElementById("snmp-empty");
-            empty.style.display = "";
-            empty.textContent = "SNMP status unavailable.";
-        });
-    }
-
-    function renderSNMP(targets, sources, metrics) {
-        var list = document.getElementById("snmp-list");
-        var empty = document.getElementById("snmp-empty");
-        if (!targets.length) {
-            list.innerHTML = "";
-            empty.style.display = "";
-            return;
-        }
-        empty.style.display = "none";
-
-        var sourceByName = {};
-        for (var i = 0; i < sources.length; i++) sourceByName[sources[i].name] = sources[i];
-
-        // /api/snmp returns every row in the window, newest first, across
-        // however many poll rounds fell inside it — keep only the most
-        // recent round's rows per router for the interface breakdown.
-        var latestTs = {}, rowsByRouter = {};
-        for (var m = 0; m < metrics.length; m++) {
-            var r = metrics[m];
-            if (!latestTs[r.router_name]) latestTs[r.router_name] = r.polled_at;
-            if (r.polled_at === latestTs[r.router_name]) {
-                (rowsByRouter[r.router_name] = rowsByRouter[r.router_name] || []).push(r);
-            }
-        }
-
-        var html = "";
-        for (var t = 0; t < targets.length; t++) {
-            var tgt = targets[t];
-            var src = sourceByName[tgt.name] || {};
-            var statusCls = src.status || "unknown";
-            var statusLabel = src.status ? src.status.toUpperCase() : "no data yet";
-
-            html += "<div class='snmp-router'>";
-            html += "<div class='snmp-router-header'>";
-            html += "<span><span class='snmp-router-name'>" + esc(tgt.name) + "</span>" +
-                    "<span class='dim'> " + esc(tgt.mgmt_ip) + "</span>" +
-                    (src.sys_name ? "<span class='snmp-router-sysname'>sysName: " +
-                     esc(src.sys_name) + "</span>" : "") +
-                    "</span>";
-            html += "<span><span class='snmp-status-badge " + statusCls + "'>" +
-                    esc(statusLabel) + "</span>" +
-                    "<button class='snmp-btn-delete' data-snmp-target='" + esc(tgt.name) +
-                    "' title='Remove'>&times;</button></span>";
-            html += "</div>";
-
-            if (src.error_detail) {
-                html += "<div class='snmp-error-detail'>" + esc(src.error_detail) + "</div>";
-            }
-
-            var ifaces = (rowsByRouter[tgt.name] || []).filter(function(r) {
-                return r.status === "ok" && r.if_descr;
-            });
-            if (ifaces.length) {
-                html += "<table class='snmp-if-table'><thead><tr>" +
-                        "<th>Interface</th><th>In</th><th>Out</th><th>In Err</th>" +
-                        "<th>Out Err</th><th>In Disc</th><th>Out Disc</th></tr></thead><tbody>";
-                for (var f = 0; f < ifaces.length; f++) {
-                    var ifr = ifaces[f];
-                    html += "<tr><td>" + esc(ifr.if_descr) + "</td>" +
-                            "<td>" + fmtBytes(ifr.if_in_octets) + "</td>" +
-                            "<td>" + fmtBytes(ifr.if_out_octets) + "</td>" +
-                            "<td>" + snmpCount(ifr.if_in_errors) + "</td>" +
-                            "<td>" + snmpCount(ifr.if_out_errors) + "</td>" +
-                            "<td>" + snmpCount(ifr.if_in_discards) + "</td>" +
-                            "<td>" + snmpCount(ifr.if_out_discards) + "</td></tr>";
-                }
-                html += "</tbody></table>";
-            }
-            html += "</div>";
-        }
-        list.innerHTML = html;
-
-        var btns = list.querySelectorAll(".snmp-btn-delete");
-        for (var b = 0; b < btns.length; b++) {
-            btns[b].addEventListener("click", function(e) {
-                var name = e.currentTarget.getAttribute("data-snmp-target");
-                if (confirm("Remove SNMP target " + name + "?")) {
-                    fetch("/snmp/targets/" + encodeURIComponent(name), {method: "DELETE"})
-                        .then(function() { loadSNMP(); });
-                }
-            });
-        }
-    }
-
-    document.getElementById("btn-add-snmp-target").addEventListener("click", function() {
-        var name = prompt("Router name (e.g. R1):");
-        if (!name) return;
-        var mgmtIp = prompt("Management IP for " + name + " (the address on the management VLAN):");
-        if (!mgmtIp) return;
-        var community = prompt(
-            "SNMP community for " + name + " (blank = hub's default HUB_SNMP_COMMUNITY):", "");
-
-        var body = {name: name.trim(), mgmt_ip: mgmtIp.trim()};
-        if (community) body.community = community.trim();
-
-        fetch("/snmp/targets", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify(body)
-        }).then(function(r) {
-            return r.json().then(function(respBody) {
-                if (!r.ok) alert("Could not add SNMP target: " + (respBody.error || r.status));
-                loadSNMP();
-            });
-        });
-    });
 
     // ---------------------------------------------------------------
     // Health summary — answers "is anything broken?" without a scan
@@ -1126,7 +925,7 @@ a:hover { text-decoration: underline; }
     // ---------------------------------------------------------------
     // Static targets
     //
-    // Rows are source VMs, columns are targets — the same shape as the mesh
+    // Rows are source nodes, columns are targets — the same shape as the mesh
     // matrix, so it reads the same way. Only the tests each target declares
     // are drawn, since a loopback has no HTTP server to answer.
     // ---------------------------------------------------------------
@@ -1256,7 +1055,7 @@ a:hover { text-decoration: underline; }
             html += "<tr" + (stale ? " class='stale'" : "") + ">";
             html += "<td>" + esc(ep.hostname) + "</td>";
             html += "<td>" + esc(ep.ip) + "</td>";
-            html += "<td><span class='router-badge'>" + esc(ep.router) + "</span></td>";
+            html += "<td><span class='group-badge'>" + esc(ep.group_name) + "</span></td>";
             html += "<td>" + agoStr + " ago" + (stale ? " !" : "") + "</td>";
             html += "<td><button class='btn-delete' data-host='" + esc(ep.hostname) + "' title='Remove'>&times;</button></td>";
             html += "</tr>";
@@ -1288,8 +1087,9 @@ a:hover { text-decoration: underline; }
     }
 
     // Correlation is the reason the syslog receiver exists: a red cell says a
-    // path broke, and the routers say why. These links carry the moment of the
-    // sample across so nobody has to retype a window by hand.
+    // path broke, and the network devices between the nodes say why. These
+    // links carry the moment of the sample across so nobody has to retype a
+    // window by hand.
     var SYSLOG_PIN_MINUTES = 5;
 
     function syslogUrl(ts, extra) {
@@ -1301,18 +1101,18 @@ a:hover { text-decoration: underline; }
         return extra ? url + extra : url;
     }
 
-    // The routers behind a pair, for a sender-filtered link. Best effort by
+    // The groups behind a pair, for a sender-filtered link. Best effort by
     // design: syslog identifies a device by the hostname it puts in its own
-    // messages, which is not necessarily guestinfo.lab.router. An unmatched
+    // messages, which is not necessarily guestinfo.lab.group. An unmatched
     // name yields an empty view rather than a wrong one, and the unfiltered
     // window link beside it always works.
-    function pairRouters(src, dst) {
+    function pairGroups(src, dst) {
         var out = [];
         for (var i = 0; i < endpoints.length; i++) {
             var e = endpoints[i];
-            if ((e.hostname === src || e.hostname === dst) && e.router &&
-                out.indexOf(e.router) === -1) {
-                out.push(e.router);
+            if ((e.hostname === src || e.hostname === dst) && e.group_name &&
+                out.indexOf(e.group_name) === -1) {
+                out.push(e.group_name);
             }
         }
         return out;
@@ -1345,13 +1145,13 @@ a:hover { text-decoration: underline; }
         html += "<div class='detail-syslog'>syslog: " +
                 "<a href='" + syslogUrl(anchorTs) + "' target='_blank' rel='noopener'>" +
                 "&plusmn;" + SYSLOG_PIN_MINUTES + " min</a>";
-        var routers = pairRouters(src, dst);
-        for (var ri = 0; ri < routers.length; ri++) {
+        var groups = pairGroups(src, dst);
+        for (var gi = 0; gi < groups.length; gi++) {
             html += "<span class='sep'>|</span><a href='" +
-                    syslogUrl(anchorTs, "&host=" + encodeURIComponent(routers[ri])) +
+                    syslogUrl(anchorTs, "&host=" + encodeURIComponent(groups[gi])) +
                     "' target='_blank' rel='noopener' title='Filtered to the syslog hostname " +
-                    esc(routers[ri]) + "; empty if the router logs under a different name'>" +
-                    esc(routers[ri]) + "</a>";
+                    esc(groups[gi]) + "; empty if the device logs under a different name'>" +
+                    esc(groups[gi]) + "</a>";
         }
         html += "</div>";
 
@@ -1486,7 +1286,7 @@ a:hover { text-decoration: underline; }
         var tests = prompt(
             "Tests to run against " + name + ", comma separated.\n" +
             "Valid: http, ssh, traceroute, pmtu, dns, smb, smtp, iperf3, loss\n\n" +
-            "A router loopback typically answers traceroute and pmtu but has no HTTP server.",
+            "A device loopback typically answers traceroute and pmtu but has no HTTP server.",
             "traceroute,pmtu");
         if (!tests) return;
 
@@ -1528,8 +1328,6 @@ a:hover { text-decoration: underline; }
     setInterval(loadClock, 60000);
     loadHealth();
     setInterval(loadHealth, 60000);
-    loadSNMP();
-    setInterval(loadSNMP, 30000);
 })();
 </script>
 </body>

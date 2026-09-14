@@ -15,7 +15,7 @@
 #   3. Shutdown and convert to template in vCenter
 #
 # After cloning:
-#   1. Set a static IP (or DHCP reservation on the router)
+#   1. Set a static IP (or a DHCP reservation)
 #   2. Boot — the hub dashboard starts automatically on port 80
 
 set -eu
@@ -23,7 +23,6 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HUB_INSTALL_DIR="/opt/lab-tester-hub"
 DB_DIR="/var/lib/lab-tester"
-SERVE_DIR="/srv/lab-tester-configs"
 LAB_ROOT_PASSWORD="${LAB_ROOT_PASSWORD:-lab123}"
 
 # -------------------------------------------------------------------
@@ -72,14 +71,9 @@ apk add --no-cache \
     curl \
     open-vm-tools \
     chrony \
-    lldpd \
-    busybox-extras
+    lldpd
 
 log "Packages installed"
-
-# busybox-extras provides the httpd applet lab-tester-serve runs (the config
-# file download server, section 9b below) -- same package test-vm's lab-httpd
-# already depends on for the identical reason.
 
 # Enable open-vm-tools on boot
 rc-update add open-vm-tools default
@@ -104,7 +98,7 @@ log "Credentials: root / ${LAB_ROOT_PASSWORD}"
 # 3. Create directories
 # -------------------------------------------------------------------
 log "Creating directories"
-mkdir -p "$HUB_INSTALL_DIR" "$DB_DIR" "$SERVE_DIR"
+mkdir -p "$HUB_INSTALL_DIR" "$DB_DIR"
 
 # -------------------------------------------------------------------
 # 4. Copy hub application
@@ -132,22 +126,22 @@ chmod +x "$HUB_INSTALL_DIR/run.sh" "$HUB_INSTALL_DIR/serve.py" "$HUB_INSTALL_DIR
 ln -sf "$HUB_INSTALL_DIR/hub-setup.sh" /usr/local/bin/hub-setup.sh
 
 # -------------------------------------------------------------------
-# Agent scripts served to the test VMs.
+# Agent scripts served to nodes.
 #
 # This is the single place agent scripts are edited: drop a new version in
-# /opt/lab-tester-hub/agent/ and every VM picks it up within 5 minutes.
+# /opt/lab-tester-hub/agent/ and every node picks it up within 5 minutes.
 # Checksums are computed on demand, so no rebuild step is needed after an
 # edit — just save the file.
 # -------------------------------------------------------------------
 log "Installing agent scripts for distribution"
 mkdir -p "$HUB_INSTALL_DIR/agent"
 
-# Prefer a sibling test-vm/ tree (the usual layout when the whole project is
+# Prefer a sibling node/ tree (the usual layout when the whole project is
 # copied across); fall back to an agent/ directory shipped alongside hub/.
-if [ -d "${SCRIPT_DIR}/../test-vm/scripts" ]; then
-    cp -f "${SCRIPT_DIR}/../test-vm/scripts/test-cycle.sh" "$HUB_INSTALL_DIR/agent/"
-    cp -f "${SCRIPT_DIR}/../test-vm/scripts/register.sh"   "$HUB_INSTALL_DIR/agent/"
-    log "  agent scripts copied from ../test-vm/scripts"
+if [ -d "${SCRIPT_DIR}/../node/scripts" ]; then
+    cp -f "${SCRIPT_DIR}/../node/scripts/test-cycle.sh" "$HUB_INSTALL_DIR/agent/"
+    cp -f "${SCRIPT_DIR}/../node/scripts/register.sh"   "$HUB_INSTALL_DIR/agent/"
+    log "  agent scripts copied from ../node/scripts"
 elif [ -d "${SCRIPT_DIR}/agent" ]; then
     cp -f "${SCRIPT_DIR}/agent/"*.sh "$HUB_INSTALL_DIR/agent/" 2>/dev/null || true
     log "  agent scripts copied from ./agent"
@@ -166,7 +160,7 @@ if ! python3 -c "import flask" 2>/dev/null; then
 fi
 
 # Waitress serves the dashboard instead of Flask's development server, which
-# is single-threaded: with every test VM POSTing results on the same tick and
+# is single-threaded: with every node POSTing results on the same tick and
 # the dashboard polling every 30s, requests would queue behind each other.
 log "Installing waitress WSGI server"
 if ! python3 -c "import waitress" 2>/dev/null; then
@@ -187,19 +181,15 @@ HUB_DB_PATH=/var/lib/lab-tester/hub.db
 
 # How long to keep test results (hours).
 # The hub prunes older rows on each result push; without this the results
-# table grows by roughly 100k rows a day at 5 VMs.
+# table grows by roughly 100k rows a day at 5 nodes.
 HUB_RESULT_RETENTION_HOURS=24
 
 # Drop endpoints that have not re-registered within this many hours.
-# Test VMs re-register every 5 minutes.
+# Nodes re-register every 5 minutes.
 HUB_STALE_ENDPOINT_HOURS=6
 
 # Port to listen on
 HUB_PORT=80
-
-# Debug mode. Currently read into config.DEBUG but not acted on by serve.py —
-# setting it true changes nothing today.
-HUB_DEBUG=false
 
 # --- Syslog receiver -------------------------------------------------
 # Set false to disable the UDP listener entirely.
@@ -213,8 +203,8 @@ HUB_SYSLOG_BIND=0.0.0.0
 # a non-root manual run.
 HUB_SYSLOG_PORT=514
 
-# Row cap, not a time window: a router at debug level outpaces any retention
-# period, so rows are what must be bounded.
+# Row cap, not a time window: a network device at debug level outpaces any
+# retention period, so rows are what must be bounded.
 HUB_SYSLOG_MAX_ROWS=300000
 
 # The syslog listener is a second writer against the same SQLite file. Without
@@ -230,27 +220,6 @@ HUB_HEALTH_SERVICES=lab-tester-hub,chronyd,dropbear,open-vm-tools,lldpd
 
 # Timeout for each rc-service check, in seconds.
 HUB_HEALTH_SERVICE_TIMEOUT_S=3
-
-# --- SNMP polling (interface counters, opt-in) -------------------------
-# Off by default. Enabling requires the hub to have an address on the
-# routers' Management VLAN -- every poll is source-bound to HUB_MGMT_IP,
-# because the routers' SNMP ACL (docs/csr-baseline.cfg) only answers it.
-# Leaving HUB_MGMT_IP empty while enabled is a startup failure, logged
-# loudly, not a silent no-op.
-HUB_SNMP_ENABLED=false
-HUB_MGMT_IP=
-
-# Must match snmp-server community in the routers' config.
-HUB_SNMP_COMMUNITY=public
-
-# Seconds between poll rounds.
-HUB_SNMP_POLL_INTERVAL=60
-
-# Per-request timeout, in seconds.
-HUB_SNMP_TIMEOUT_S=3
-
-# Age-based retention for polled interface counters.
-HUB_SNMP_RETENTION_HOURS=24
 ENVEOF
 
 # -------------------------------------------------------------------
@@ -299,37 +268,12 @@ INITEOF
 
 chmod +x /etc/init.d/lab-tester-hub
 
-# First-boot autoconfiguration from guestinfo -- mirrors the test-vm image's
+# First-boot autoconfiguration from guestinfo -- mirrors the node image's
 # lab-tester-firstboot. Stands down when guestinfo.hub.ip/gateway are absent
 # rather than blocking on a prompt nobody is there to answer; the interactive
 # path is login-setup.sh below instead.
 cp -f "${SCRIPT_DIR}/services/firstboot.initd" /etc/init.d/lab-tester-hub-firstboot
 chmod +x /etc/init.d/lab-tester-hub-firstboot
-
-# -------------------------------------------------------------------
-# 9b. Config file server (lab-tester-serve)
-#
-# Originally designed in docs/HANDOFF.md, built here -- "config file server":
-# read-only router config files, served for a router to pull with
-# `copy http://`. publish-config (section 10 below) is the write side --
-# an operator-run helper, never the web server itself, which never writes.
-# -------------------------------------------------------------------
-log "Installing config file server (lab-tester-serve)"
-cp -f "${SCRIPT_DIR}/services/serve.initd" /etc/init.d/lab-tester-serve
-chmod +x /etc/init.d/lab-tester-serve
-cp -f "${SCRIPT_DIR}/services/serve.conf" /etc/lab-tester-serve.conf
-
-# OpenRC sources /etc/conf.d/<service-name> automatically -- these three
-# become plain shell variables inside serve.initd with no extra code needed.
-cat > /etc/conf.d/lab-tester-serve <<CONFDEOF
-# SERVE_BIND=0.0.0.0 listens on every address, per explicit lab requirement
-# -- unlike SNMP polling, which must go OUT the management NIC specifically,
-# this is routers pulling IN, and any router may not yet have its
-# management-VLAN interface configured when it needs to fetch a config.
-SERVE_BIND=0.0.0.0
-SERVE_PORT=8080
-SERVE_DIR=${SERVE_DIR}
-CONFDEOF
 
 # Invite an unconfigured hub to run hub-setup.sh at first interactive login,
 # where a real tty is guaranteed (unlike an OpenRC start()).
@@ -350,9 +294,6 @@ rc-update add lab-tester-hub-firstboot default
 apk add --no-cache dropbear
 rc-update add dropbear default
 
-# Config file download server
-rc-update add lab-tester-serve default
-
 log "Services enabled"
 
 # -------------------------------------------------------------------
@@ -368,8 +309,6 @@ cat > /etc/motd <<'MOTDEOF'
   │  Config:    /opt/lab-tester-hub/hub.env       │
   │  DB:        /var/lib/lab-tester/hub.db        │
   │  Logs:      rc-service lab-tester-hub status  │
-  │  Configs:   http://<this-vm-ip>:8080/         │
-  │    publish-config <file>                      │
   │                                               │
   │  Not configured yet? Log in and run:          │
   │    hub-setup.sh                               │
@@ -424,73 +363,12 @@ SIPEOF
 chmod +x /usr/local/bin/set-static-ip
 
 # -------------------------------------------------------------------
-# 10b. Create publish-config helper script
-#
-# The write side of lab-tester-serve: copies a file into the served
-# directory, prints its URL and md5, and the exact router-side commands
-# from docs/HANDOFF.md's original design -- copy, verify /md5, reload in 5
-# as a safety net, then configure replace (never copy ... running-config,
-# which merges instead of replacing).
-# -------------------------------------------------------------------
-log "Creating publish-config helper script"
-cat > /usr/local/bin/publish-config <<'PUBEOF'
-#!/bin/sh
-# Publish a router config file for download via lab-tester-serve.
-# Usage: publish-config <local-file> [name-on-server]
-
-set -eu
-
-if [ $# -lt 1 ]; then
-    echo "Usage: publish-config <local-file> [name-on-server]"
-    exit 1
-fi
-
-SRC="$1"
-DEST_NAME="${2:-$(basename "$SRC")}"
-
-if [ ! -f "$SRC" ]; then
-    echo "publish-config: $SRC not found" >&2
-    exit 1
-fi
-
-_serve_dir=$(grep -m1 '^SERVE_DIR=' /etc/conf.d/lab-tester-serve 2>/dev/null | cut -d= -f2)
-_serve_dir="${_serve_dir:-/srv/lab-tester-configs}"
-_port=$(grep -m1 '^SERVE_PORT=' /etc/conf.d/lab-tester-serve 2>/dev/null | cut -d= -f2)
-_port="${_port:-8080}"
-_ip=$(ip -o -4 addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
-_ip="${_ip:-<hub-ip>}"
-
-mkdir -p "$_serve_dir"
-cp -f "$SRC" "$_serve_dir/$DEST_NAME"
-chmod 0444 "$_serve_dir/$DEST_NAME"
-
-_md5=$(md5sum "$_serve_dir/$DEST_NAME" | awk '{print $1}')
-
-echo "Published: $_serve_dir/$DEST_NAME"
-echo "URL:       http://${_ip}:${_port}/${DEST_NAME}"
-echo "MD5:       $_md5"
-echo
-echo "On the router:"
-echo "  copy http://${_ip}:${_port}/${DEST_NAME} flash:"
-echo "  verify /md5 flash:${DEST_NAME} $_md5"
-echo "  reload in 5"
-echo "  configure replace flash:${DEST_NAME}"
-echo "  reload cancel"
-PUBEOF
-
-chmod +x /usr/local/bin/publish-config
-
-# -------------------------------------------------------------------
 # 11. Clean up for template conversion
 # -------------------------------------------------------------------
 log "Cleaning up for template conversion"
 
 # Remove SSH host keys (regenerated on boot)
 rm -f /etc/dropbear/dropbear_*_host_key
-
-# Nothing should be published on the golden image itself -- publish-config
-# is an operator action taken after cloning.
-rm -f "$SERVE_DIR"/*
 
 # Clear machine-id
 : > /etc/machine-id 2>/dev/null || true

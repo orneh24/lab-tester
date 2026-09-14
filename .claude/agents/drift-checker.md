@@ -28,9 +28,9 @@ Watch: install dir, config dir, log dir, web root, hub install dir, DB path,
 agent dir, hub port.
 
 **Service names.** Every `rc-service` / `rc-update` name in the docs must
-exist as a file in `test-vm/services/` or be created by a build script.
+exist as a file in `node/services/` or be created by a build script.
 Current set: `lab-httpd`, `iperf3`, `lab-smbd`, `lab-smtpd`,
-`lab-tester-firstboot`, `lab-tester-hub`, `lab-tester-serve` (hub only), plus
+`lab-tester-firstboot`, `lab-tester-hub`, `lab-tester-hub-firstboot`, plus
 stock `crond`, `dropbear`, `chronyd`, `open-vm-tools`, `lldpd` (both roles,
 always-on).
 
@@ -68,8 +68,8 @@ with the same rigour as the guide, and treat findings as higher severity.
 
 Every project-specific agent has already drifted at least once:
 
-- `lab-tester-diagnostician` taught that an empty 10-minute window means "test
-  VM writing timestamps in local time". That was a real bug, since fixed by
+- `lab-tester-diagnostician` taught that an empty 10-minute window means "node
+  writing timestamps in local time". That was a real bug, since fixed by
   having the hub stamp `received_at` — so the example sent the diagnostician
   chasing something structurally impossible while the real cause (a rejected
   payload) went unexamined.
@@ -96,7 +96,7 @@ Every project-specific agent has already drifted at least once:
   form the docs do not specify, so check every file rather than assuming the
   newer ones inherited the fix. Take the count from `ls .claude/agents/*.md`;
   do not trust any number written in prose, including this file's.
-- **Dependency lists** against the `apk add` line in `test-vm/build-template.sh`
+- **Dependency lists** against the `apk add` line in `node/build-template.sh`
   and `hub/build-template.sh`. Both directions: a package claimed but not
   installed, and one installed but undocumented. Check the *exact* package,
   not the family — `iputils` and `iputils-ping` are different packages with
@@ -119,15 +119,11 @@ misleading** (it would cause a wrong action, not merely an outdated one).
 Reserve the last for cases like the diagnostician example above, and list
 those first regardless of file order.
 
-Agents with no project-specific content — the generic `network-*` ones —
-cannot drift. Confirm that by grepping for project references rather than
-reading them in full, and say so in one line instead of auditing them.
-
 ## How to report
 
 List each mismatch as: file and line, what it says, what the code does, and
 the corrected text. Order by blast radius — something that misleads during a
-VM build outranks a stale comment.
+node build outranks a stale comment.
 
 Report only real mismatches. Do not pad with style suggestions or rewrite
 prose that is merely inelegant; a long list of nitpicks buries the one line
