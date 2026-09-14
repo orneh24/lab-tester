@@ -44,6 +44,69 @@ and intent only.
 
 ## Recent changes
 
+**Re-scope: Hub + Node only, routers moved to a separate project (2026-09-14).**
+
+The project scope narrowed to the Hub and the Node (formerly "test VM").
+Router/switch design, configuration, and deployment are no longer part of
+this codebase — they move to a dedicated project. Direct CSR1000v references
+are removed throughout.
+
+Concretely:
+
+- `test-vm/` renamed to `node/`; "test VM" → "Node" everywhere in docs, UI,
+  and agent/skill text.
+- `endpoints.router` renamed to `endpoints.group_name` (wire field `router` →
+  `group_name`, guestinfo key `lab.router` → `lab.group`, config var
+  `ROUTER_NAME` → `GROUP_NAME`). A migration in `init_db()` renames the
+  column on an existing database. `group_name` is a plain operator-chosen
+  label — it clusters nodes on the dashboard and filters syslog by sender,
+  and carries no network-topology meaning to the hub.
+- **SNMP polling removed entirely** — `hub/app/snmp_client.py`,
+  `snmp_poller.py`, the `snmp_targets`/`snmp_metrics` tables, the
+  `/snmp/targets` and `/api/snmp*` routes, the "Router SNMP" dashboard panel,
+  and all `HUB_SNMP_*`/`HUB_MGMT_IP` config keys. This was device monitoring
+  for routers specifically and belongs with the router project now.
+- **Config file download server removed entirely** — `lab-tester-serve`,
+  `serve.initd`/`serve.conf`, `publish-config`, and `/srv/lab-tester-configs`.
+  This existed only so routers could pull IOS config files from the hub.
+- **PowerCLI router deployment removed** — `deploy/deploy-routers.ps1` and
+  `deploy/lab-manifest.sample.ps1` (added earlier the same day, see the
+  entry below — superseded within the day by this re-scope) deleted along
+  with the whole `deploy/` directory.
+- **Router config templates removed** — `docs/csr-baseline.cfg`,
+  `docs/csr-example-r1.cfg` deleted.
+- `docs/TOPOLOGY.md` rewritten generically: hub plus N nodes, the network
+  between them drawn as one opaque cloud, syslog shown as an optional
+  one-way arrow into the hub. The router-topology PNG (`docs/img/topology.png`)
+  deleted along with it.
+- The syslog receiver **stays** — the hub still optionally receives
+  RFC3164/Cisco-style syslog from whatever network devices an operator points
+  at it, for troubleshooting correlation. It never assumed CSR1000v
+  specifically at the protocol level; only the docs and some comments did,
+  and those are reworded.
+- The SMTP ALG-detection rationale is reworded vendor-neutrally ("SMTP ALG /
+  ESMTP inspection, common on firewalls and NAT gateways") without weakening
+  constraint 21's guarantee — the underlying detector and the no-relay
+  structural guarantee are unchanged.
+- 9 vendored generic network-device skills and 3 generic network agents
+  deleted (`cisco-ios-patterns`, `netmiko-ssh-automation`,
+  `network-bgp-diagnostics`, `network-config-validation`,
+  `network-interface-health`, the wireshark/tshark/packet-capture skills,
+  the Palo-Alto skill, and the `network-architect`/`network-config-reviewer`/
+  `network-troubleshooter` agents) — none were lab-tester-specific.
+- Two dead config keys removed as a side effect of the cleanup:
+  `HUB_TEST_INTERVAL`/`HUB_DEBUG` (read, never acted on) and the node's
+  `TEST_INTERVAL` (documented as informational-only; the crontab is
+  `* * * * *` regardless).
+- `docs/img/dashboard-mock.jpg` re-captured against the current dashboard: a
+  synthetic 5-node mesh (`site-a`..`site-e`), one failing path (`node-3` →
+  `node-5`) selected with its syslog correlation panel open, no SNMP panel.
+  README caption matches.
+
+Every numbered constraint in `CLAUDE.md` survives with its number unchanged;
+only the router-specific citations inside constraints 20 and 21 were
+reworded, not weakened.
+
 **PowerCLI router deployment script, Phase 1 (2026-09-14).**
 
 `deploy/deploy-routers.ps1` + `deploy/lab-manifest.sample.ps1`. Deploys N
@@ -267,13 +330,13 @@ but **nothing here works today**:
 - **Hub as the lab's NTP source.** `chrony` is installed and `chronyd` enabled
   by `hub/build-template.sh`, so `/api/time` reports real tracking state — but
   no `chrony.conf` is written, there is no `set-ntp-clients` helper and no
-  access list, and `test-vm/scripts/setup.sh` does not configure chrony on the
-  VMs. The hub disciplines its own clock and serves time to nobody.
+  access list, and `node/scripts/setup.sh` does not configure chrony on the
+  nodes. The hub disciplines its own clock and serves time to nobody.
 - **`set-static-ip` per-interface state.** The helper takes
   `<ip/cidr> <gateway>` only; there is no interface argument and no
   `/etc/lab-tester/net.d`. Configuring a second NIC still overwrites the first.
 - **`/etc/sysctl.d/99-lab-tester.conf` pinning `net.ipv4.ip_forward=0`.**
-  Absent, which matters for the management-separation design below.
+  Absent — Alpine's default is 0, but the build does not assert it.
 - **Time-based syslog pruning.** Syslog is row-capped only. (`results` *does*
   have working time-based retention via `HUB_RESULT_RETENTION_HOURS`, swept on
   each `POST /results` — constraint 8.)
@@ -283,7 +346,8 @@ but **nothing here works today**:
 - **Syslog has never run on the real hub VM.** Everything so far is a local
   Python process on a workstation. Confirm the OpenRC service starts the
   listener, that UDP/514 binds under it (514 is privileged — the service runs
-  as root, so this should hold), and that routers' packets actually arrive.
+  as root, so this should hold), and that a real network device's packets
+  actually arrive.
 - **`/api/time` and the dashboard correlation links now have suite coverage**
   (R21 and R22, added 2026-09-10). R21 drives all eight `chronyc` states through
   the route with a faked binary, since the workstation only ever exercises the
@@ -302,42 +366,30 @@ but **nothing here works today**:
   see. Cost of the decision: an unparseable line shows up even when filtering
   for emergencies only, so a noisy unrecognised format cannot be filtered out
   by severity — judged the better failure of the two.
-- **No IP→router map.** Sender identity is the parsed syslog hostname, falling
-  back to source IP. Where a router's syslog hostname differs from its
-  `ROUTER_NAME`, the dashboard's filtered link returns an empty view while the
-  unfiltered ±5 min link beside it still works — empty rather than wrong, by
-  design. A `lab.yaml`/`routers.json` map would fix it properly.
+- **No IP→device map.** Sender identity for syslog is the parsed hostname,
+  falling back to source IP. Where a device's syslog hostname differs from a
+  node's `GROUP_NAME`, the dashboard's filtered link returns an empty view
+  while the unfiltered ±5 min link beside it still works — empty rather than
+  wrong, by design. A separate identity map would fix it properly, but is
+  outside this project's scope now that device identity/configuration lives
+  in the router project.
 - **Hostname is still the one per-clone input.** `setup.sh` takes it from
-  `guestinfo.lab.hostname` or derives it from the router slug. Deriving it from
+  `guestinfo.lab.hostname` or derives it from the group slug. Deriving it from
   IP or MAC at first boot would remove the last manual step and the
   duplicate-hostname failure mode (constraint 1).
-- **Management separation: designed, now specified in config, not yet
-  deployed to real hardware.** The design: router management interfaces in a
-  VRF (`MGMT`), hub dual-homed with NIC1 on the test-VM segment and NIC2 on
-  the management VLAN, test VMs never on that VLAN, `ip_forward=0` on the hub
-  (see above — not yet pinned). `docs/csr-baseline.cfg` /
-  `docs/csr-example-r1.cfg` (2026-09-12) now write this out concretely — VRF
-  definition, `vrf forwarding` on the mgmt interface, `vrf MGMT` on every
-  logging/ntp/snmp line — but nothing here has run against a real CSR1000v
-  yet. The risk it addresses is not the hub reporting path; it is that a
-  shared management VLAN gives the *routers* a path to each other outside the
-  tested topology, so leaked routing would turn the matrix green while
-  measuring nothing.
-- **Router config rendering and hub auto-registration — not built.**
-  `deploy/deploy-routers.ps1` (below) deploys bare router VMs from a
-  manifest, but applying `csr-baseline.cfg`/`csr-example-rN.cfg` is still a
-  manual console step, and nothing pushes the manifest's router identities
-  into `POST /snmp/targets` or `POST /targets`. A config renderer plus a
-  registration script against the manifest would close this — and would
-  also be the expected-vs-registered check the dashboard cannot do today
-  (compare `GET /endpoints`'s router set against the manifest's).
+
+Management separation (a VRF-isolated router management plane, a
+dual-homed hub, SNMP polling, router config rendering) was designed and
+partly specified before the 2026-09-14 re-scope. All of that is now out of
+scope for this project — it belongs with whatever owns the router/switch
+side, not here. See the 2026-09-14 entry above for exactly what was removed.
 
 ## Conventions that must not drift
 
 - **The wire contract is frozen** unless the golden image is rebuilt:
-  `/register` requires hostname, ip, subnet, router; `/results` uses the
-  documented field names. Renaming a field breaks every deployed VM silently.
-- **Test VM scripts are BusyBox ash**, `#!/bin/sh` with `set -u`. No bashisms.
+  `/register` requires hostname, ip, subnet, group_name; `/results` uses the
+  documented field names. Renaming a field breaks every deployed node silently.
+- **Node scripts are BusyBox ash**, `#!/bin/sh` with `set -u`. No bashisms.
 - **Timestamps are stored in SQLite's `YYYY-MM-DD HH:MM:SS`**, in every table,
   and converted to ISO-8601 with `Z` by `iso()` on the way out. Window queries
   compare `received_at` against `datetime('now', ...)`. Do **not** store the
@@ -371,7 +423,7 @@ Send a test message:
 
 ```sh
 python3 -c "import socket;socket.socket(socket.AF_INET,socket.SOCK_DGRAM).sendto(
-b'<187>12: R1: *Sep  8 12:00:00.000 UTC: %OSPF-5-ADJCHG: Nbr 10.0.0.2 FULL to DOWN',
+b'<187>12: SW1: *Sep  8 12:00:00.000 UTC: %OSPF-5-ADJCHG: Nbr 10.0.0.2 FULL to DOWN',
 ('127.0.0.1',5514))"
 curl -s 'http://127.0.0.1:8099/api/syslog?minutes=5'
 ```
@@ -382,18 +434,21 @@ is set. Set it.
 
 ## Skills and agents
 
-12 skills in `skills/` and 9 agents in `.claude/agents/` (a real directory, not
-a junction). Project-specific skills: `lab-tester-hub-api`,
-`lab-tester-test-vm`, `lab-tester-troubleshooting`. Project-specific agents:
+4 skills in `skills/` and 7 agents in `.claude/agents/` (a real directory, not
+a junction), following the 2026-09-14 re-scope which removed 9 vendored
+generic network-device skills and 3 generic network agents that carried no
+project-specific content. Project-specific skills: `lab-tester-hub-api`,
+`lab-tester-node`, `lab-tester-troubleshooting`, `lab-tester-add-test-type`.
+Project-specific agents:
 
 | Agent | Use |
 |---|---|
 | `regression-tester` | Gate before handing over any change. One check per numbered constraint, plus live-hub and wire-contract tiers. |
 | `drift-checker` | Docs, config samples, UI labels and agent definitions vs. what the code does. |
 | `hub-api-developer` | Changes under `hub/` — routes, schema, dashboard. |
-| `alpine-vm-builder` | Anything running on the test VMs. |
+| `alpine-vm-builder` | Anything running on the nodes. |
+| `golden-image-verifier` | Real-Alpine-container verification of `build-template.sh` changes. |
 | `lab-tester-diagnostician` | Triage when the dashboard looks wrong. |
 | `test-result-analyst` | Interpreting collected results rather than fixing an outage. |
 
-The `network-*` agents are generic and carry no project content. Read the
-relevant skill before changing the code it covers.
+Read the relevant skill before changing the code it covers.

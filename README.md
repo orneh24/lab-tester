@@ -2,76 +2,58 @@
 
 > **AI disclaimer:** This project was created using [Claude Code](https://claude.com/claude-code).
 
-Network end-to-end connectivity testing for the "inside" interfaces of
-virtualized Cisco CSR1000v routers in an R&S lab. Goes beyond ICMP — validates
-real TCP connections (HTTP, SSH, SMB, SMTP, iperf3), packet loss/jitter, path
-MTU, DNS resolution and traceroute, correlates failures against the routers'
-own syslog, polls their SNMP interface counters, and visualizes results on a
-web dashboard.
+Network end-to-end connectivity testing between nodes on a network. Goes
+beyond ICMP — validates real TCP connections (HTTP, SSH, SMB, SMTP, iperf3),
+packet loss/jitter, path MTU, DNS resolution and traceroute, optionally
+correlates failures against syslog from network devices on the path, and
+visualizes results on a web dashboard.
 
-![Dashboard with a synthetic 5-router mesh, one failing path selected, and its syslog correlation panel open](docs/img/dashboard-mock.jpg)
+![Dashboard with a synthetic 5-node mesh, one failing path selected, and its syslog correlation panel open](docs/img/dashboard-mock.jpg)
 
-*Mock data — a synthetic 5-router mesh seeded locally to exercise every panel,
-not a real lab. See [Running the hub locally](#running-the-hub-locally).
-Predates the `smb`/`B` and `smtp`/`E` columns added below — screenshot
-regeneration is optional and out of scope for those changes.*
+*Mock data — a synthetic 5-node mesh seeded locally to exercise every panel,
+not a real lab. See [Running the hub locally](#running-the-hub-locally).*
 
 ## What it tests
 
 | Type | Dashboard label | Runs against |
 |---|---|---|
-| HTTP | H | every VM pair, static targets |
-| SSH | S | every VM pair, static targets |
+| HTTP | H | every node pair, static targets |
+| SSH | S | every node pair, static targets |
 | Traceroute | T | rationed — on a timer, or on demand after a failure |
-| Path MTU | M | every VM pair, static targets — catches a tunnel that passes small packets but hangs on large transfers |
+| Path MTU | M | every node pair, static targets — catches a path that passes small packets but hangs on large transfers |
 | DNS | D | one test per source against a resolver, not a pair — its own panel |
-| iperf3 | I | every VM pair, when `ENABLE_IPERF=true` |
-| SMB | B | every VM pair, when `ENABLE_SMB=true` |
-| Loss/jitter | L | every VM pair, always on — packet loss % and RTT jitter via `fping` |
-| SMTP | E | every VM pair when `ENABLE_SMTP=true`, plus any static target declaring it (ungated) — catches ESMTP inspection that rewrites capability verbs in flight rather than blocking them |
+| iperf3 | I | every node pair, when `ENABLE_IPERF=true` |
+| SMB | B | every node pair, when `ENABLE_SMB=true` |
+| Loss/jitter | L | every node pair, always on — packet loss % and RTT jitter via `fping` |
+| SMTP | E | every node pair when `ENABLE_SMTP=true`, plus any static target declaring it (ungated) — catches ESMTP inspection that rewrites capability verbs in flight rather than blocking them |
 
-**Static targets** — router loopbacks, outside hosts — run no agent and are
-configured once on the hub, merged into every VM's cycle.
+**Static targets** — gateways, outside hosts, device loopbacks — run no agent
+and are configured once on the hub, merged into every node's cycle.
 
-**Syslog correlation** — the hub also receives Cisco/RFC3164 syslog over
-UDP/514. Every test card and pair header in the dashboard links to a `/syslog`
-window pinned to that sample's ±5 minutes, so a failing path can be read next
-to what the routers said at the time.
-
-**SNMP polling** — opt-in (`HUB_SNMP_ENABLED`). The hub polls each router's
-interface counters (errors, discards, throughput) and `sysName`, rendered on
-its own dashboard panel. Requires the hub to be multi-homed, with outgoing
-polls source-bound to a management-VLAN NIC (`HUB_MGMT_IP`) — the routers'
-SNMP ACL only answers that address.
-
-**Config file server** — `lab-tester-serve` serves `/srv/lab-tester-configs/`
-read-only on port 8080, with directory listing. `publish-config <file>` on
-the hub is the only write path; a router pulls its config with `copy http://`.
+**Syslog correlation** — the hub can optionally receive Cisco/RFC3164-style
+syslog over UDP/514 from network devices on the path. Every test card and
+pair header in the dashboard links to a `/syslog` window pinned to that
+sample's ±5 minutes, so a failing path can be read next to what those devices
+said at the time. This is entirely optional — the harness works with no
+devices logging to the hub at all.
 
 ## Architecture
 
-- **Hub VM** — Alpine, ~192 MB RAM. Not a test participant; infrastructure
+- **Hub** — Alpine VM, ~192 MB RAM. Not a test participant; infrastructure
   only. Flask API + SQLite (WAL) + syslog receiver, served by waitress. Ships
   its own zero-touch static-IP setup (`guestinfo.hub.*`, or an interactive
   prompt at first login) and a "Hub Health" dashboard panel (services, load,
   memory, disk).
-- **Test VMs** — Alpine, ~128 MB RAM, one per router inside subnet. Cloned
-  from a single golden template; drive the tests via cron every 60s and push
-  results to the hub.
-- **Routers (CSR1000v)** — eBGP full mesh over a shared outside segment (one
-  AS per router), a VRF-isolated management plane, NAT for internet access.
-  Baseline + worked-example configs in `docs/csr-baseline.cfg` /
-  `docs/csr-example-r1.cfg`; diagram in [`docs/TOPOLOGY.md`](docs/TOPOLOGY.md).
-  `deploy/deploy-routers.ps1` (PowerCLI) deploys the bare VMs — sizing and
-  the 3-vNIC mapping only, no config.
+- **Nodes** — Alpine VMs, ~128 MB RAM, one per network segment under test.
+  Cloned from a single golden template; drive the tests via cron every 60s
+  and push results to the hub.
 
 Full design and the constraints that must not regress are in
 [`CLAUDE.md`](CLAUDE.md).
 
-> **Status:** the hub is exercised locally (this README's screenshot included)
-> but nothing here has run on real CSR1000v hardware yet. See
-> [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for what's still unverified and
-> [`docs/HANDOFF.md`](docs/HANDOFF.md) for current state and open items.
+> **Status:** the hub is exercised locally (this README's screenshot included).
+> See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for what's still unverified
+> and [`docs/HANDOFF.md`](docs/HANDOFF.md) for current state and open items.
 
 ## Running the hub locally
 
@@ -92,6 +74,4 @@ skips both. Ports below 1024 need root, hence `HUB_SYSLOG_PORT` above here.
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Build order and checklist, stage by stage |
 | [`docs/BUILD_GUIDE.md`](docs/BUILD_GUIDE.md) | Step-by-step detail for each stage |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Current state, recent changes, open items |
-| [`docs/TOPOLOGY.md`](docs/TOPOLOGY.md) | Network diagram — segments, routing, hub NICs |
-| [`docs/csr-baseline.cfg`](docs/csr-baseline.cfg), [`docs/csr-example-r1.cfg`](docs/csr-example-r1.cfg) | CSR1000v config templates (placeholders, not real addresses) |
-| [`deploy/deploy-routers.ps1`](deploy/deploy-routers.ps1), [`deploy/lab-manifest.sample.ps1`](deploy/lab-manifest.sample.ps1) | PowerCLI: deploys bare CSR1000v VMs from a manifest |
+| [`docs/TOPOLOGY.md`](docs/TOPOLOGY.md) | System diagram — hub, nodes, and the network between them |

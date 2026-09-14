@@ -2,7 +2,7 @@
 # OpenRC service: auto-configure the hub's static IP from guestinfo on
 # first boot.
 #
-# Mirrors test-vm's lab-tester-firstboot: only acts when guestinfo actually
+# Mirrors node's lab-tester-firstboot: only acts when guestinfo actually
 # carries both required keys. With neither present, this stands down rather
 # than prompting -- an OpenRC start() has no reliable attached tty to read
 # from, so it must never be the thing that blocks the boot. The interactive

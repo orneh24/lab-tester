@@ -20,11 +20,11 @@ decisions first — they change what the wiring looks like.
 ## Design decisions — settle these before touching code
 
 **Gating.** Opt-in (`ENABLE_X`, default `false`) for anything that stands up
-a new listening daemon on every VM (`smb`, `smtp`, `iperf3`) — it has a real
-resource and security footprint. Always-on for a client-only probe with no
-footprint of its own (`loss`).
+a new listening daemon on every node (`smb`, `smtp`, `iperf3`) — it has a
+real resource and security footprint. Always-on for a client-only probe with
+no footprint of its own (`loss`).
 
-**Shape.** Full mesh (server on every VM), static-target-only, or both.
+**Shape.** Full mesh (server on every node), static-target-only, or both.
 `smtp` is the precedent for "both, asymmetrically": its mesh side is gated
 behind `ENABLE_SMTP`, but its static-target arm is **ungated** — registering
 a static target via `POST /targets` is already an explicit operator opt-in,
@@ -75,9 +75,10 @@ output — `X` was rejected for `smtp` because masked ESMTP capabilities
 render as literal `X` runs.
 
 **Security review — mandatory for any new listening daemon.** Can it be
-reached from outside the lab? Check the router's actual NAT/default-route
-config (`docs/csr-example-r1.cfg`), not just "it's an isolated lab." Does
-the daemon's config have a *structural* guarantee against the worst case
+reached from outside the lab? A node may sit behind NAT with a real
+default route off the lab, so check that assumption rather than asserting
+"it's an isolated lab." Does the daemon's config have a *structural*
+guarantee against the worst case
 (no relay action, no admin interface, no write path) rather than a policy
 setting that could be edited away later? This review produced CLAUDE.md
 constraint 21 for `smtp`. The next daemon-backed test type should get the
@@ -85,11 +86,11 @@ same scrutiny before it ships, not after.
 
 ## The wiring checklist
 
-**`test-vm/scripts/test-cycle.sh`**
+**`node/scripts/test-cycle.sh`**
 - Inline config default (`ENABLE_X="${ENABLE_X:-false}"`) — mandatory, not
   just in `config.sample`. `setup.sh` never rewrites an existing config
-  file, so every already-deployed VM runs against a config missing the new
-  key.
+  file, so every already-deployed node runs against a config missing the
+  new key.
 - `run_<type>_test()` — the seven-field JSON `printf` shape every test
   function shares; `json_escape()` for free text; `latency_ms` built with
   real arithmetic, never `printf '%d000'` (constraint 9 — this shipped as a
@@ -97,7 +98,7 @@ same scrutiny before it ships, not after.
 - The mesh-loop call site, gated if applicable.
 - The static-target `case` arm, gated or not per the shape decision above.
 
-**`test-vm/build-template.sh`**
+**`node/build-template.sh`**
 - Package list entry, verified against the live Alpine index — never
   assumed (constraint 14's whole reason for existing).
 - A package-notes comment explaining any non-obvious choice (metapackage
@@ -111,25 +112,25 @@ same scrutiny before it ships, not after.
   (queue directories, machine IDs), leaving directory ownership/mode
   untouched if the daemon is picky about it.
 
-**`test-vm/services/<name>d.initd` + `<name>d.conf`** (new files, if a
+**`node/services/<name>d.initd` + `<name>d.conf`** (new files, if a
 daemon is involved) — mirror the closest existing pair line for line:
-RAM guards sized for a 128MB VM, not interface-bound (the inside NIC's
+RAM guards sized for a 128MB node, not interface-bound (the inside NIC's
 identity isn't known until DHCP on a clone), a comment on every
 non-default directive, and — if security review found something
 structural — that guarantee stated as the file's first comment, not buried.
 
-**`test-vm/scripts/setup.sh`**
+**`node/scripts/setup.sh`**
 - Value resolution (environment-only, no guestinfo key, matching
   `ENABLE_IPERF`/`ENABLE_SMB`'s pattern).
 - Config heredoc write.
-- Service-config refresh — the path that updates already-deployed VMs from
+- Service-config refresh — the path that updates already-deployed nodes from
   an unpacked source tree.
 - Conditional enable/start block, with an `else` branch logging why it's
   off.
 
-**`test-vm/config.sample`** — new `ENABLE_X=false` block matching the
+**`node/config.sample`** — new `ENABLE_X=false` block matching the
 existing ~9-line comment density: what it does, why this test specifically,
-any safety statement, costs on a 128MB VM. A commented-out tunables block
+any safety statement, costs on a 128MB node. A commented-out tunables block
 if the test has any, matching `LOSS_*`/`SMTP_*`'s style.
 
 **`hub/app/app.py`** — add to `VALID_TESTS`. No schema change; `test_type`
@@ -170,7 +171,7 @@ semantics are non-obvious) · `.claude/agents/lab-tester-diagnostician.md`
 
 ## Which agent handles which part
 
-`alpine-vm-builder` for every `test-vm/` file — it verifies with real
+`alpine-vm-builder` for every `node/` file — it verifies with real
 shimmed-tool round trips. `hub-api-developer` for `hub/app/app.py` +
 `hub/templates/dashboard.html` — it drives a live hub round trip. Both can
 run **in parallel**, since they touch disjoint files.

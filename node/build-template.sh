@@ -1,5 +1,5 @@
 #!/bin/sh
-# build-template.sh — Build the test-vm golden template on a fresh Alpine install.
+# build-template.sh — Build the node golden template on a fresh Alpine install.
 # Run as root after booting the Alpine ISO and completing setup-alpine.
 #
 # This script:
@@ -10,8 +10,8 @@
 #   5. Cleans up for template conversion
 #
 # Usage:
-#   1. SCP the entire test-vm/ directory to the Alpine VM
-#   2. Run: sh /root/test-vm/build-template.sh
+#   1. SCP the entire node/ directory to the Alpine VM
+#   2. Run: sh /root/node/build-template.sh
 #   3. Shutdown and convert to template in vCenter
 
 set -eu
@@ -40,7 +40,7 @@ die() {
 # -------------------------------------------------------------------
 [ "$(id -u)" -eq 0 ] || die "Must run as root"
 
-log "=== lab-tester test-vm template builder ==="
+log "=== lab-tester node template builder ==="
 
 # -------------------------------------------------------------------
 # 1. Enable community repository
@@ -164,15 +164,15 @@ fi
 # Enable open-vm-tools on boot
 rc-update add open-vm-tools default
 
-# Time sync. Test VMs stamp their own results and the hub compares times
+# Time sync. Nodes stamp their own results and the hub compares times
 # across the mesh; unsynchronised clocks make per-test timings meaningless
 # and traceroute correlation impossible to read.
 rc-update add chronyd default
 
 # LLDP neighbor discovery, for troubleshooting and network discovery — not a
 # test type, just always-on infrastructure like chrony. Lets an engineer read
-# `lldpcli show neighbors` on a VM to confirm which router/port it's actually
-# plugged into without console access to the router.
+# `lldpcli show neighbors` on a node to confirm which switch/port it's
+# actually plugged into without console access to that device.
 rc-update add lldpd default
 
 # -------------------------------------------------------------------
@@ -393,7 +393,7 @@ log "Creating first-boot setup reminder"
 cat > /etc/motd <<'MOTDEOF'
 
   ┌──────────────────────────────────────────────┐
-  │           lab-tester test VM                  │
+  │           lab-tester node                     │
   │                                               │
   │  First-boot setup:                            │
   │    1. Edit /etc/lab-tester/config             │
@@ -471,12 +471,12 @@ log ""
 log "To deploy a clone (zero-touch, recommended):"
 log "  Set these guestinfo keys on the clone in vCenter, then boot:"
 log "    guestinfo.lab.hub_url   http://10.0.0.100"
-log "    guestinfo.lab.router    R1"
+log "    guestinfo.lab.group     site-a"
 log "    guestinfo.lab.subnet    10.1.1.0/24"
-log "    guestinfo.lab.hostname  test-r1     (optional)"
+log "    guestinfo.lab.hostname  test-site-a (optional)"
 log "  Then run: /usr/local/bin/lab-tester/setup.sh"
 log ""
 log "To deploy a clone (manual):"
-log "  1. Clone from template, assign to correct port group"
+log "  1. Clone from template, assign to correct network"
 log "  2. Boot and log in (root / ${LAB_ROOT_PASSWORD})"
 log "  3. Run: /usr/local/bin/lab-tester/setup.sh  (it will prompt)"

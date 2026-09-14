@@ -43,13 +43,13 @@ start() {
     fi
 
     _hub=$(_guestinfo "lab.hub_url")
-    _router=$(_guestinfo "lab.router")
+    _group=$(_guestinfo "lab.group")
 
     case "$_hub" in *"No value found"*) _hub="" ;; esac
-    case "$_router" in *"No value found"*) _router="" ;; esac
+    case "$_group" in *"No value found"*) _group="" ;; esac
 
-    if [ -z "$_hub" ] || [ -z "$_router" ]; then
-        ewarn "guestinfo.lab.hub_url / guestinfo.lab.router not set"
+    if [ -z "$_hub" ] || [ -z "$_group" ]; then
+        ewarn "guestinfo.lab.hub_url / guestinfo.lab.group not set"
         ewarn "skipping auto-setup — run $SETUP by hand to configure"
         return 0
     fi

@@ -28,7 +28,7 @@ fi
 
 ENABLE_IPERF="${ENABLE_IPERF:-false}"
 # Inline default, not just config.sample: setup.sh never rewrites an
-# existing config file, so every already-deployed VM runs this script
+# existing config file, so every already-deployed node runs this script
 # against a config with no ENABLE_SMB or ENABLE_SMTP line at all.
 ENABLE_SMB="${ENABLE_SMB:-false}"
 ENABLE_SMTP="${ENABLE_SMTP:-false}"
@@ -40,7 +40,7 @@ SSH_KEY="${SSH_KEY:-/etc/lab-tester/id_lab}"
 #
 # A slow traceroute (15 hops x 2s) against several targets can outlast the
 # 60-second cron interval. Without a lock, cycles pile up on top of each
-# other and the VM ends up running several at once, skewing every timing it
+# other and the node ends up running several at once, skewing every timing it
 # reports. Skip this run if the previous one is still going.
 # -------------------------------------------------------------------
 LOCK_DIR="/run/lab-tester-test-cycle.lock"
@@ -358,8 +358,8 @@ run_iperf3_test() {
     _target_ip="$1"
     _start_s=$(date +%s)
 
-    # An iperf3 server handles one client at a time. With every VM testing
-    # every other VM on the same 60-second tick, collisions are routine and
+    # An iperf3 server handles one client at a time. With every node testing
+    # every other node on the same 60-second tick, collisions are routine and
     # are contention, not a connectivity fault — so retry once after a
     # randomised pause, then report the run as skipped rather than failed.
     _attempt=1
@@ -408,7 +408,7 @@ run_iperf3_test() {
 # SMB is chatty and session-oriented — the test type most likely to catch an
 # inspection policy, an MSS/MTU problem mid-transfer, or a NAT path that only
 # tolerates short-lived flows, none of which HTTP/SSH/iperf3 would notice.
-# Every test VM runs smbd exporting one small read-only share (lab-smbd,
+# Every node runs smbd exporting one small read-only share (lab-smbd,
 # gated by ENABLE_SMB); this pulls the fixed probe file from a peer.
 #
 # Unlike iperf3, smbd forks a child per connection, so simultaneous peers
@@ -455,10 +455,11 @@ run_smb_test() {
 # Run SMTP test against a target.
 #
 # Nothing else in this mesh catches a device that PASSES SMTP while
-# REWRITING it. Cisco ESMTP inspection / ASA ESMTP fixup masks unrecognised
-# capability verbs with runs of X (a client sees "250-XXXXXXXX" instead of
-# "250-STARTTLS"). smb catches inspection that drops or stalls a session;
-# this catches inspection that silently edits one.
+# REWRITING it. SMTP ALG / ESMTP inspection -- common on firewalls and NAT
+# gateways -- masks unrecognised capability verbs with runs of X (a client
+# sees "250-XXXXXXXX" instead of "250-STARTTLS"). smb catches inspection
+# that drops or stalls a session; this catches inspection that silently
+# edits one.
 #
 # Success stops at EHLO, not RCPT. A real, correctly-configured relay will
 # (and should) reject RCPT TO:<probe@lab.invalid> with something like
@@ -470,10 +471,10 @@ run_smb_test() {
 #
 # The conversation never issues DATA -- it's aborted with RSET right after
 # the envelope. That is what makes probing a real, unconfigured-by-us relay
-# safe: this VM has a real path to the internet (NAT overload + default
-# route, see docs/csr-example-r1.cfg), so never reaching DATA is a hard
-# guarantee this test cannot actually send mail anywhere, healthy relay or
-# not.
+# safe: a node may sit behind NAT with a real default route off the lab, so
+# "it's an isolated lab" is not a valid defence -- never reaching DATA is a
+# hard guarantee this test cannot actually send mail anywhere, healthy relay
+# or not.
 #
 # Client is hand-rolled nc (BusyBox, already on the image via
 # busybox-extras), not curl: curl's smtp:// support issues VRFY rather than
@@ -537,7 +538,7 @@ run_smtp_test() {
 
     # Capability masking detector -- the single most important line of logic
     # in this function. A run of 4+ literal X characters where a capability
-    # token should be is the signature Cisco ESMTP inspection / ASA fixup
+    # token should be is the signature an SMTP ALG / ESMTP inspection engine
     # leaves behind when it scrubs a verb it doesn't recognise.
     _mask_note=""
     if printf '%s' "$_output" | grep -qE '^250[ -]X{4,}'; then
@@ -579,8 +580,9 @@ else
 fi
 
 # -------------------------------------------------------------------
-# Build the target list: the test-VM mesh plus any static targets the hub
-# holds (router loopbacks, outside addresses — things that run no agent).
+# Build the target list: the node mesh plus any static targets the hub
+# holds (gateways, outside addresses, device loopbacks — things that run no
+# agent).
 # -------------------------------------------------------------------
 append_result() {
     [ -z "$1" ] && return 0
@@ -706,7 +708,7 @@ while [ "$j" -lt "$TARGET_COUNT" ]; do
             R=$(run_pmtu_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
     esac
     case ",$TG_TESTS," in
-        # A router loopback is a legitimate loss/jitter target, same as pmtu
+        # A device loopback is a legitimate loss/jitter target, same as pmtu
         # and traceroute above — no ENABLE_ gate, always available to declare.
         *,loss,*)
             R=$(run_loss_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
@@ -717,7 +719,7 @@ while [ "$j" -lt "$TARGET_COUNT" ]; do
     esac
     case ",$TG_TESTS," in
         # A static SMB target is realistic (a real file server), unlike a
-        # router loopback — so this gets an arm even though iperf3 doesn't.
+        # device loopback — so this gets an arm even though iperf3 doesn't.
         *,smb,*)
             if [ "$ENABLE_SMB" = "true" ]; then
                 R=$(run_smb_test "$TG_IP" "$TG_NAME") || true; append_result "$R"
@@ -730,7 +732,7 @@ while [ "$j" -lt "$TARGET_COUNT" ]; do
         # comment) -- it cannot send mail even against a real production
         # relay. Requiring ENABLE_SMTP=true on top of that opt-in would force
         # standing up a local OpenSMTPD instance just to probe an external
-        # target this VM can do nothing dangerous against. This asymmetry
+        # target this node can do nothing dangerous against. This asymmetry
         # vs. smb is intentional, not a missed gate.
         *,smtp,*)
             R=$(run_smtp_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;

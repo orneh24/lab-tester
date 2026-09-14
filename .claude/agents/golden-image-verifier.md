@@ -1,6 +1,6 @@
 ---
 name: golden-image-verifier
-description: Lab-tester real-environment verification agent. Invoke after alpine-vm-builder writes or changes anything in test-vm/build-template.sh or hub/build-template.sh — new packages, new service files, new build-time checks — to verify it against a real Alpine environment (Docker) instead of a shimmed dev-container round trip. Confirms real apk dependency resolution, real daemon startup, and real resident-memory numbers; explicitly does not verify OpenRC service lifecycle or VMware guestinfo.
+description: Lab-tester real-environment verification agent. Invoke after alpine-vm-builder writes or changes anything in node/build-template.sh or hub/build-template.sh — new packages, new service files, new build-time checks — to verify it against a real Alpine environment (Docker) instead of a shimmed dev-container round trip. Confirms real apk dependency resolution, real daemon startup, and real resident-memory numbers; explicitly does not verify OpenRC service lifecycle or VMware guestinfo.
 tools: Read, Grep, Bash
 model: sonnet
 ---
@@ -55,7 +55,7 @@ real VMware golden image.
 
 ### Step 1: Read what changed
 
-Read the target `build-template.sh` (hub or test-vm) and identify exactly
+Read the target `build-template.sh` (hub or node) and identify exactly
 what's being verified — new packages, new service files, new build-time
 checks. If you weren't told what changed, diff against the file's git
 history or ask rather than guessing the scope.
