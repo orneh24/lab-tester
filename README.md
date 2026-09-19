@@ -29,7 +29,11 @@ rc-service lab-tester-hub start
 sh /root/lab-tester/node/build-template.sh
 vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME, SUBNET — all three required
 /usr/local/bin/lab-tester/setup.sh
-# verify it registers, shut down, convert to vCenter template
+# verify it registers, THEN undo that (it recreated the config and
+# hostname the build script had just cleared) before sealing the image:
+rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+printf 'lab-tester-template\n' > /etc/hostname
+# now shut down, convert to vCenter template
 
 # Per node clone: set a unique hostname, then
 register.sh

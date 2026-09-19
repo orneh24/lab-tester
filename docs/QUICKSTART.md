@@ -24,7 +24,11 @@ rc-service lab-tester-hub start
 sh /root/lab-tester/node/build-template.sh
 vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME, SUBNET — all three required
 /usr/local/bin/lab-tester/setup.sh
-# verify it registers, shut down, convert to vCenter template
+# verify it registers, THEN undo that (it recreated the config and
+# hostname the build script had just cleared) before sealing the image:
+rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+printf 'lab-tester-template\n' > /etc/hostname
+# now shut down, convert to vCenter template
 
 # Per node clone: set a unique hostname, then
 register.sh
@@ -132,5 +136,6 @@ up), but start the matching service by hand if it isn't running yet
 |---|---|
 | Golden image built before the hub had its final IP | every clone has the wrong `HUB_URL` |
 | Duplicate node hostname | one node silently overwrites another's registration |
+| Verified registration on the golden image, sealed it without re-cleaning | every clone starts with that verification run's real hostname/`GROUP_NAME`/`SUBNET` baked in — same collision as above, from clone one |
 | `ENABLE_SMB`/`ENABLE_SMTP` set but service never started | test never runs, no red cell — just absent |
 | Static target declares a test it can't answer | permanent red for that pair |

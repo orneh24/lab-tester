@@ -226,6 +226,24 @@ Before converting to a template, clean up the VM so each clone starts fresh.
 > (§1 / DEPLOYMENT stage 1) — `rm -rf /root/lab-tester` if you used one,
 > right before 5.3. 5.1/5.2 are kept below only as reference for what the
 > scripts do; 5.3-5.5 are the real remaining manual steps, for both roles.
+>
+> **But if you then verified the image** — set `/etc/lab-tester/config` and
+> ran `setup.sh` to confirm the node registers against the live hub, as
+> DEPLOYMENT stage 3 has you do — that verification just undid the config
+> and hostname part of 5.1's cleanup: `setup.sh` writes a real config and
+> sets a real hostname. **Redo those two before 5.3**, or the template ships
+> with a live `GROUP_NAME`/`SUBNET` and a real hostname baked in, and every
+> clone from it starts with that same hostname — the collision constraint 1
+> exists to prevent.
+>
+> ```sh
+> rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+> printf 'lab-tester-template\n' > /etc/hostname
+> ```
+>
+> Same applies to the hub if you tested registration/dashboard access before
+> converting it: `rm -f /var/lib/lab-tester/hub.db /etc/lab-tester-hub/.setup-done`
+> (see 5.5's note — templating the hub is optional in the first place).
 
 ### 5.1 Clean Up (Node Image, reference only — see banner above)
 

@@ -43,8 +43,12 @@ rc-service lab-tester-hub start
 sh /root/lab-tester/node/build-template.sh
 vi /etc/lab-tester/config        # set HUB_URL, GROUP_NAME, SUBNET
 /usr/local/bin/lab-tester/setup.sh
-# confirm it registers against the live hub, then shut down and
-# convert to a vCenter template
+# confirm it registers against the live hub, THEN undo what that just
+# did before sealing it (see stage 3 below) — verifying re-creates the
+# config and hostname the build script had just cleared:
+rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+printf 'lab-tester-template\n' > /etc/hostname
+# now shut down and convert to a vCenter template
 
 # 4. Clone the node template once per subnet
 #    (on each clone) set a unique hostname, then:
@@ -185,10 +189,19 @@ Verify before moving on:
       `lab-smtpd` under `ENABLE_SMTP`, plus `grep -n relay /etc/smtpd/smtpd.conf`
       returning nothing but comments before trusting it with a real network path
 - [ ] Confirm registration works against the live hub before sealing the image
-- [ ] `node/build-template.sh` already did cleanup (machine-id, dropbear
-      host keys, logs, zero free space) as its last step — nothing to do
-      here except `rm -rf /root/lab-tester` if you used a git checkout
-      (stage 1) to get the files onto the VM
+- [ ] **Redo the config/hostname cleanup** — `node/build-template.sh` already
+      cleared `/etc/lab-tester/config` and reset the hostname to
+      `lab-tester-template` as its last step, but the config-and-`setup.sh`
+      verification above just undid both. Repeat that part by hand:
+      `rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done` and
+      `printf 'lab-tester-template\n' > /etc/hostname`. Skip this and every
+      clone starts with this run's real `GROUP_NAME`/`SUBNET` and hostname
+      baked in — the hostname collision stage 4 warns about, from clone one.
+      The rest of the script's cleanup (machine-id, dropbear host keys,
+      logs, zero free space) doesn't need repeating — nothing after it
+      touched those
+- [ ] `rm -rf /root/lab-tester` if you used a git checkout (stage 1) to get
+      the files onto the VM
 - [ ] Shut down, convert to template in vCenter
 
 ---
