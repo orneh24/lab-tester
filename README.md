@@ -13,6 +13,35 @@ visualizes results on a web dashboard.
 *Mock data — a synthetic 5-node mesh seeded locally to exercise every panel,
 not a real lab. See [Running the hub locally](#running-the-hub-locally).*
 
+## Quick start
+
+```sh
+# base VM: setup-alpine, then git clone the repo, then clone the VM twice
+apk add --no-cache git && git clone <repo-url> /root/lab-tester
+
+# Hub (build first — its IP gets baked into the node image)
+sh /root/lab-tester/hub/build-template.sh
+set-static-ip <hub-ip>/<cidr> <gateway>   # or guestinfo.hub.ip/.gateway pre-boot
+rc-service networking restart
+rc-service lab-tester-hub start
+
+# Node golden image
+sh /root/lab-tester/node/build-template.sh
+vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME, SUBNET — all three required
+/usr/local/bin/lab-tester/setup.sh
+# verify it registers, THEN undo that (it recreated the config and
+# hostname the build script had just cleared) before sealing the image:
+rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+printf 'lab-tester-template\n' > /etc/hostname
+# now shut down, convert to vCenter template
+
+# Per node clone: set a unique hostname, then
+register.sh
+```
+
+Full command/config reference: [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
+Checklist with verification steps: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 ## What it tests
 
 | Type | Dashboard label | Runs against |
@@ -70,6 +99,7 @@ skips both. Ports below 1024 need root, hence `HUB_SYSLOG_PORT` above here.
 
 | File | Covers |
 |---|---|
+| [`docs/QUICKSTART.md`](docs/QUICKSTART.md) | One-page command/config reference for an experienced sysadmin |
 | [`CLAUDE.md`](CLAUDE.md) | Architecture, design decisions, constraints that must not regress |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Build order and checklist, stage by stage |
 | [`docs/BUILD_GUIDE.md`](docs/BUILD_GUIDE.md) | Step-by-step detail for each stage |

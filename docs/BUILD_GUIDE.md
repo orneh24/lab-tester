@@ -8,11 +8,17 @@ This guide walks through building Alpine Linux VMs for the lab-tester connectivi
 2. [Base VM Creation](#2-base-vm-creation-in-vcenter)
 3. [Alpine Installation](#3-alpine-installation)
 4. [Base Package Installation](#4-base-package-installation)
-5. [Node Configuration](#5-node-configuration)
-6. [Hub VM Configuration](#6-hub-vm-configuration)
-7. [Golden Image Preparation](#7-golden-image-preparation)
-8. [Cloning and Deployment](#8-cloning-and-deployment)
-9. [Troubleshooting](#9-troubleshooting)
+5. [Golden Image Preparation](#5-golden-image-preparation)
+6. [Cloning and Deployment](#6-cloning-and-deployment)
+7. [Troubleshooting](#7-troubleshooting)
+8. [Appendix A: Manual Node Configuration (reference only)](#appendix-a-manual-node-configuration-reference-only)
+9. [Appendix B: Manual Hub Configuration (reference only)](#appendix-b-manual-hub-configuration-reference-only)
+
+Sections 1-4 build the shared base VM; `node/build-template.sh` and
+`hub/build-template.sh` then turn a clone of it into each role — that's the
+whole of node/hub configuration, covered in `DEPLOYMENT.md` stages 2-3, not
+in this guide. The appendices exist only to show what those scripts do
+under the hood; do not follow them as build steps.
 
 ---
 
@@ -26,7 +32,13 @@ Before starting, make sure you have:
   - A management/routable subnet where the hub VM will live (IP address, gateway, DNS)
   - Knowledge of which port groups map to each node's subnet
   - The hub VM's IP address or hostname (nodes push results here)
-- **The lab-tester project files** on a machine you can SCP from, or uploaded to a datastore
+- **The lab-tester project files**, reachable one of two ways:
+  - **Git (recommended):** the repo's clone URL, reachable from the VM.
+    `git` is in Alpine's `main` repository, so `git clone` works right after
+    `setup-alpine`, before you'd even enable `community` (§4.1)
+  - **SCP (fallback):** the files on a machine you can SCP from. A bare
+    `setup-alpine` install has no `scp`/`sftp` binary at all — see
+    Appendix A.2 / B.2 before trying this
 - **Console access** to VMs via vCenter (the web console or VMRC)
 
 ---
@@ -201,395 +213,41 @@ enforce PEP 668.
 
 ---
 
-## 5. Node Configuration
-
-> **Superseded by `node/build-template.sh`**, exactly as §6 is by the hub's
-> script. Copy `node/` to the VM and run it: it installs the package set
-> above, populates `/usr/local/bin/lab-tester/`, installs the services and the
-> logrotate config, generates the shared SSH keypair, and enables `dropbear`,
-> `crond`, `lab-httpd`, `chronyd`, `open-vm-tools` and the first-boot service.
-> `DEPLOYMENT.md` stage 3 is the current procedure.
->
-> Following the steps below by hand is worse than redundant here: they assume a
-> package set you installed yourself, and a missing `openssh-client` or
-> `iputils-ping` produces a node that registers and reports green while its SSH
-> and PMTU tests can never pass (§4.2). Keep this section for reading what the
-> script does.
-
-Starting from the base VM (or a clone of it), configure it as a node.
-
-### 5.1 Create Directory Structure
-
-```sh
-mkdir -p /etc/lab-tester
-mkdir -p /usr/local/bin/lab-tester
-mkdir -p /var/www/localhost/htdocs
-```
-
-### 5.2 Copy Project Files
-
-From the machine hosting the project files, SCP them onto the VM. Adjust paths to match your source:
-
-```sh
-# From your workstation:
-scp node/scripts/register.sh    root@<VM_IP>:/usr/local/bin/lab-tester/
-scp node/scripts/test-cycle.sh  root@<VM_IP>:/usr/local/bin/lab-tester/
-scp node/scripts/setup.sh       root@<VM_IP>:/usr/local/bin/lab-tester/
-scp node/config.sample           root@<VM_IP>:/etc/lab-tester/config.sample
-scp node/services/iperf3.initd  root@<VM_IP>:/etc/init.d/iperf3
-scp node/services/smbd.initd    root@<VM_IP>:/etc/init.d/lab-smbd
-scp node/services/smb.conf      root@<VM_IP>:/etc/samba/smb.conf
-scp node/services/smtpd.initd   root@<VM_IP>:/etc/init.d/lab-smtpd
-scp node/services/smtpd.conf    root@<VM_IP>:/etc/smtpd/smtpd.conf
-scp node/services/lab-tester-httpd.conf root@<VM_IP>:/etc/httpd.conf
-scp node/services/crontab       root@<VM_IP>:/etc/lab-tester/crontab
-```
-
-> **Do not copy the crontab onto `/etc/crontabs/root`.** That replaces root's
-> crontab wholesale and destroys Alpine's `run-parts` entries, which are what
-> drive `/etc/periodic/*` — including the daily logrotate run. The disk then
-> fills with rotation installed but never triggered. `setup.sh` merges the
-> lab-tester block into the existing crontab instead; let it. (CLAUDE.md
-> constraint 12.)
-
-### 5.3 Create the Configuration File
-
-```sh
-cp /etc/lab-tester/config.sample /etc/lab-tester/config
-vi /etc/lab-tester/config
-```
-
-Set the required values:
-
-```sh
-HUB_URL="http://<hub-ip>"
-GROUP_NAME="site-a"
-SUBNET="10.1.1.0/24"
-```
-
-> **Note:** For the golden image, you can leave placeholder values here. Each clone will need its own `GROUP_NAME` and `SUBNET`.
-
-### 5.4 Set Permissions and Run Setup
-
-```sh
-chmod +x /usr/local/bin/lab-tester/*.sh
-chmod +x /etc/init.d/iperf3
-chmod +x /etc/init.d/lab-smbd
-chmod +x /etc/init.d/lab-smtpd
-/usr/local/bin/lab-tester/setup.sh
-```
-
-### 5.5 Enable Services in OpenRC
-
-```sh
-rc-update add iperf3 default
-rc-update add crond default
-```
-
-> `lab-smbd` and `lab-smtpd` are not enabled here. Like `iperf3` under
-> `ENABLE_IPERF`, `setup.sh` only `rc-update add`s each when its
-> `ENABLE_SMB`/`ENABLE_SMTP` flag is `true` in the config — `build-template.sh`
-> installs the packages and service files but leaves both off by default
-> (CLAUDE.md test-type section).
-
-> **Alpine quirk:** Alpine uses OpenRC, not systemd. Services are managed with `rc-service <name> start|stop|restart` and enabled at boot with `rc-update add <name> <runlevel>`. The `default` runlevel is equivalent to systemd's multi-user target.
-
-Start the services now to verify:
-
-```sh
-rc-service iperf3 start
-rc-service crond start
-```
-
-### 5.6 Set Up the Identity Web Page
-
-BusyBox httpd serves a simple page that identifies this node to its peers:
-
-```sh
-cat > /var/www/localhost/htdocs/index.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head><title>Lab Tester</title></head>
-<body>
-<h1>Lab Tester Node</h1>
-<p>Group: PLACEHOLDER</p>
-<p>Subnet: PLACEHOLDER</p>
-</body>
-</html>
-EOF
-```
-
-The `setup.sh` script or a first-boot script should populate the actual values from `/etc/lab-tester/config`.
-
-Start httpd:
-
-```sh
-rc-service lab-httpd start
-rc-update add lab-httpd default
-```
-
-The service is `lab-httpd`, not `httpd` — `rc-update add httpd` enables a
-service that does not exist, and the web server then fails to come back after a
-reboot, silently breaking every HTTP test in the mesh.
-
-### 5.7 Verify
-
-```sh
-# Check services are running
-rc-status
-
-# Test local HTTP
-curl -s http://localhost/
-
-# Test iperf3 is listening
-iperf3 -c 127.0.0.1 -t 1
-
-# If ENABLE_SMB=true, test smbd is listening
-smbclient -N //127.0.0.1/labshare -c 'get probe.bin /dev/null'
-
-# loss test (always on, no flag) -- confirm fping actually landed
-fping -c 3 127.0.0.1
-
-# If ENABLE_SMTP=true, test smtpd is listening and safe
-smtpd -n -f /etc/smtpd/smtpd.conf     # config parses
-grep -n relay /etc/smtpd/smtpd.conf   # must be comments only
-printf 'EHLO test\r\nQUIT\r\n' | nc -w 3 127.0.0.1 25
-
-# Check cron is loaded
-crontab -l
-```
-
----
-
-## 6. Hub VM Configuration
-
-> **Superseded by `hub/build-template.sh`.** Copy `hub/` to the VM and run that
-> script: it installs the packages, populates `/opt/lab-tester-hub/`, writes
-> `hub.env` and `/etc/init.d/lab-tester-hub`, installs `set-static-ip`, sets the
-> lab credentials, and enables the hub, `chronyd`, `open-vm-tools` and dropbear.
-> `DEPLOYMENT.md` stage 2 is the current procedure.
->
-> The steps below are kept as a reference for reading what the script does and
-> for troubleshooting a half-built hub. Do not follow them as a build: they
-> predate the script, they omit `hub.env`, `set-static-ip`, the credentials and
-> the service enables, and 6.5's init script is wrong (see the note there).
-
-Starting from the base VM (or a fresh clone), configure it as the hub.
-
-### 6.1 Create Directory Structure
-
-```sh
-mkdir -p /opt/lab-tester-hub/app
-mkdir -p /opt/lab-tester-hub/templates
-```
-
-### 6.2 Copy Hub Files
-
-```sh
-# From your workstation:
-scp hub/app/__init__.py      root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp hub/app/app.py           root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp hub/app/config.py        root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp hub/app/syslog_server.py root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp hub/templates/dashboard.html root@<HUB_IP>:/opt/lab-tester-hub/templates/
-scp hub/templates/syslog.html    root@<HUB_IP>:/opt/lab-tester-hub/templates/
-scp hub/requirements.txt     root@<HUB_IP>:/opt/lab-tester-hub/
-scp hub/serve.py             root@<HUB_IP>:/opt/lab-tester-hub/
-scp hub/run.sh               root@<HUB_IP>:/opt/lab-tester-hub/
-```
-
-`serve.py` is the entrypoint the OpenRC service runs (6.5) — without it the
-service has nothing to start. `app/__init__.py` is empty but must exist, or
-`app.app` is not an importable package. `syslog_server.py` and `syslog.html` are the
-syslog receiver and its viewer (6.7), and they fail very differently if you
-forget one:
-
-- **`syslog_server.py` missing → the hub does not start at all.** `serve.py`
-  imports it at module level, so the service dies with `ModuleNotFoundError`
-  before `main()` runs: no dashboard, no `/register`, no result collection.
-  Copy it alongside `serve.py`, not as an optional extra.
-- **`syslog.html` missing → only `/syslog` breaks**, with a template error.
-  Everything else serves normally.
-
-### 6.3 Install Python Dependencies
-
-```sh
-cd /opt/lab-tester-hub
-pip3 install -r requirements.txt --break-system-packages
-```
-
-If `py3-flask` was already installed via apk in step 4.3, the requirements file may have nothing extra to install. Either way, running pip against the requirements file ensures everything is covered.
-
-### 6.4 Configure Static IP (Recommended)
-
-The hub needs a stable address so all nodes can reach it. Edit the network configuration:
-
-```sh
-vi /etc/network/interfaces
-```
-
-Replace the DHCP config with a static block:
-
-```
-auto lo
-iface lo inet loopback
-
-auto eth0
-iface eth0 inet static
-    address 10.0.0.10/24
-    gateway 10.0.0.1
-```
-
-Set DNS:
-
-```sh
-echo "nameserver 10.0.0.1" > /etc/resolv.conf
-```
-
-Restart networking:
-
-```sh
-rc-service networking restart
-```
-
-> **Alternative:** If your lab DHCP server supports reservations, you can keep DHCP on the hub and create a reservation by MAC address. This avoids hardcoding the IP in the VM.
-
-### 6.5 Create an OpenRC Service for the Hub
-
-Create the init script:
-
-> **This snippet is wrong and kept only to be recognisable.** It runs
-> `run.sh`, the foreground debug launcher. What `build-template.sh` actually
-> installs is `command="/usr/bin/python3"` with
-> `command_args="/opt/lab-tester-hub/serve.py"`, plus a `start_pre` that sources
-> `hub.env`. Going through `run.sh` skips `serve.py`'s runtime `HUB_PORT`
-> handling, so a port set in `hub.env` is ignored.
-
-```sh
-cat > /etc/init.d/lab-tester-hub << 'EOF'
-#!/sbin/openrc-run
-
-name="lab-tester-hub"
-description="Lab Tester Hub Dashboard"
-command="/opt/lab-tester-hub/run.sh"
-command_background=true
-pidfile="/run/${RC_SVCNAME}.pid"
-output_log="/var/log/lab-tester-hub.log"
-error_log="/var/log/lab-tester-hub.log"
-
-depend() {
-    need net
-    after firewall
-}
-EOF
-
-chmod +x /etc/init.d/lab-tester-hub
-chmod +x /opt/lab-tester-hub/run.sh
-```
-
-Enable and start:
-
-```sh
-rc-update add lab-tester-hub default
-rc-service lab-tester-hub start
-```
-
-### 6.6 Test the Dashboard
-
-From the hub VM itself:
-
-```sh
-curl -s http://localhost/
-```
-
-From another machine on the network, open `http://<hub-ip>` in a browser. You should see the dashboard (initially with no test results).
-
-### 6.7 Verify the Syslog Receiver
-
-The hub listens for RFC3164 syslog (including the Cisco-style origin-id and
-`%FAC-SEV-MNEMONIC` framing many network vendors emit) on UDP/514 and stores
-it in the same database as the test results, so a red cell in the matrix can
-be read against what a network device on the path said at that moment. This
-is entirely optional — nothing in the mesh requires any device to log here.
-
-Nothing needs enabling — `serve.py` starts the listener. Confirm it bound:
-
-```sh
-rc-service lab-tester-hub restart
-grep syslog /var/log/lab-tester-hub.log     # or the service's stdout
-```
-
-Expect `[syslog] listening on 0.0.0.0:514 (cap 300000 rows)`. If instead you
-see `[syslog] not listening on 0.0.0.0:514 — ...`, the usual causes are the
-service not running as root (514 is privileged) or something else already bound
-to it. The hub keeps serving results either way — a syslog failure is never
-allowed to take the collector down with it.
-
-Send a test message from the hub itself:
-
-```sh
-# BusyBox's logger has no network option and util-linux is not installed, so
-# send the packet with the Python that is already here for the hub itself.
-python3 -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b'<190>1: SW-TEST: %SYS-5-CONFIG_I: hello from the hub', ('127.0.0.1', 514))"
-curl -s 'http://localhost/api/syslog?minutes=5'
-```
-
-You should get one row back, with `host` `SW-TEST` and `mnemonic`
-`%SYS-5-CONFIG_I`. An empty array means the packet was sent but not stored —
-check the listener line above rather than the device config.
-
-If the lab includes network devices you want to correlate against, point any
-of them at the hub the same way you would any syslog server, e.g.:
-
-```
-logging host <hub-ip>
-logging trap informational
-service timestamps log datetime msec show-timezone
-```
-
-(exact syntax depends on the device; the hub only needs RFC3164/UDP on 514).
-
-Open `http://<hub-ip>/syslog` and confirm messages appear. Filters are window,
-sender, severity and a substring search; `severity=4` means *warning or worse*,
-matching how most devices' own logging-severity filters read. Lines the
-parser could not read have no severity and stay visible under every severity
-filter, by design.
-
-The header shows the hub's clock state from `chronyc tracking` (green when
-disciplined, amber on the `local stratum 10` fallback or >100 ms out, red when
-unsynchronised). It is there because the correlation links depend on it: a
-±5 min window pinned around a test result is only as good as the clock that
-stamped it. `chronyd` is installed and enabled by `build-template.sh`; if the
-indicator reads "clock: unknown", check `rc-service chronyd status`.
-
-From the dashboard, clicking a matrix cell now gives a `syslog ±5 min` link per
-test card, pinned to that sample, plus per-group links in the pair header.
-Those filter on the device's *syslog* hostname — the name it puts in its own
-messages — so if a group link is empty while the plain window link shows the
-message, that device logs under a different name than the node's
-`guestinfo.lab.group` value. Match the names on the device side (many let you
-set a logging origin-id or hostname) if you want those links to line up.
-
-Two things worth knowing before you rely on it:
-
-- **It is not an audit trail.** UDP syslog is lossy and unauthenticated —
-  anything that can reach the segment can inject messages. Treat it as a
-  troubleshooting aid.
-- **It is capped by rows, not time** (`HUB_SYSLOG_MAX_ROWS`, default 300000).
-  A device left at debug level will roll the window shorter than you expect;
-  that is the cap doing its job, not lost messages.
-
-To disable it entirely, set `HUB_SYSLOG_ENABLED=false` in `hub.env`.
-
----
-
-## 7. Golden Image Preparation
+## 5. Golden Image Preparation
 
 Before converting to a template, clean up the VM so each clone starts fresh.
 
-### 7.1 Clean Up (Node Image)
+> **5.1 and 5.2 already happened.** Both `build-template.sh` scripts run this
+> exact cleanup themselves as their last step (host keys, machine-id,
+> hostname reset, logs, shell history, apk cache, zero-free-space) — check
+> either script's own final `log` output, which tells you so. Nothing to run
+> by hand here for either role. The one thing neither script cleans up is a
+> git checkout used to get the project files onto the VM in the first place
+> (§1 / DEPLOYMENT stage 1) — `rm -rf /root/lab-tester` if you used one,
+> right before 5.3. 5.1/5.2 are kept below only as reference for what the
+> scripts do; 5.3-5.5 are the real remaining manual steps, for both roles.
+>
+> **But if you then verified the image** — set `/etc/lab-tester/config` and
+> ran `setup.sh` to confirm the node registers against the live hub, as
+> DEPLOYMENT stage 3 has you do — that verification just undid the config
+> and hostname part of 5.1's cleanup: `setup.sh` writes a real config and
+> sets a real hostname. **Redo those two before 5.3**, or the template ships
+> with a live `GROUP_NAME`/`SUBNET` and a real hostname baked in, and every
+> clone from it starts with that same hostname — the collision constraint 1
+> exists to prevent.
+>
+> ```sh
+> rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+> printf 'lab-tester-template\n' > /etc/hostname
+> ```
+>
+> Same applies to the hub if you tested registration/dashboard access before
+> converting it: `rm -f /var/lib/lab-tester/hub.db /etc/lab-tester-hub/.setup-done`
+> (see 5.5's note — templating the hub is optional in the first place).
 
-Run these commands on the fully configured node:
+### 5.1 Clean Up (Node Image, reference only — see banner above)
+
+What the script already ran, for reading:
 
 ```sh
 # Remove SSH host keys (regenerated on first boot)
@@ -617,9 +275,9 @@ apk cache clean 2>/dev/null
 rm -rf /var/cache/apk/*
 ```
 
-### 7.2 Zero Free Space (Thin Provisioning Optimization)
+### 5.2 Zero Free Space (Thin Provisioning Optimization, reference only)
 
-This step helps vCenter reclaim unused space in thin-provisioned disks:
+What the script already ran, for reading — this is what makes thin-provisioned disks reclaim unused space:
 
 ```sh
 dd if=/dev/zero of=/zero.fill bs=1M 2>/dev/null; rm -f /zero.fill
@@ -628,29 +286,32 @@ sync
 
 > **Note:** This will temporarily fill the disk, then delete the fill file. It makes the VMDK compressible and thin-friendly.
 
-### 7.3 Shutdown
+### 5.3 Shutdown
 
 ```sh
 poweroff
 ```
 
-### 7.4 Dropbear Host Key Regeneration
+### 5.4 Dropbear Host Key Regeneration
 
 Dropbear automatically regenerates missing host keys on service start, so no additional first-boot script is needed for SSH keys. After cloning, the first `rc-service dropbear start` creates new keys.
 
-### 7.5 Convert to Template in vCenter
+### 5.5 Convert to Template in vCenter
 
 1. In vCenter, right-click the powered-off VM.
 2. Select **Template > Convert to Template**.
 3. Name it descriptively, e.g., `lab-tester-node-template-v1`.
 
-> Repeat sections 6 and 7 separately if you want a dedicated hub template. Since there is typically only one hub, you may prefer to keep it as a regular VM.
+> Do this once for the node clone. Since there is typically only one hub,
+> you may prefer to keep the hub clone as a regular VM instead of
+> converting it — 5.1-5.4 still apply to it either way, since
+> `hub/build-template.sh` runs the same cleanup as `node/build-template.sh`.
 
 ---
 
-## 8. Cloning and Deployment
+## 6. Cloning and Deployment
 
-### 8.1 Clone from Template
+### 6.1 Clone from Template
 
 1. In vCenter, right-click the template.
 2. Select **New VM from This Template**.
@@ -658,7 +319,7 @@ Dropbear automatically regenerates missing host keys on service start, so no add
 4. Select the target host and datastore.
 5. Choose **Thin Provision** for the virtual disk format.
 
-### 8.2 Assign the Correct Port Group
+### 6.2 Assign the Correct Port Group
 
 Before booting the clone:
 
@@ -669,14 +330,14 @@ Before booting the clone:
 This is critical -- the node must be on the same L2 segment as the subnet
 under test to get an IP via DHCP and to test that specific link.
 
-### 8.3 Adjust RAM (Optional)
+### 6.3 Adjust RAM (Optional)
 
 If you used 256 MB for the base, you can reduce node clones to 128 MB:
 
 1. Edit VM settings while powered off.
 2. Set Memory to **128 MB**.
 
-### 8.4 Supply the per-node configuration
+### 6.4 Supply the per-node configuration
 
 Each clone needs four values: the hub URL, the group it belongs to, its
 subnet, and its hostname. There are two ways to deliver them.
@@ -780,7 +441,7 @@ error, and `setup.sh` treats it as "fall back to the next source".
 Skip the keys entirely and let `setup.sh` prompt for the values. Fine for one
 or two nodes, tedious past that.
 
-### 8.5 Run setup and register
+### 6.5 Run setup and register
 
 ```sh
 /usr/local/bin/lab-tester/setup.sh
@@ -793,7 +454,7 @@ kept, and a live `guestinfo.lab.hostname` still takes effect.
 
 Precedence for each value is: **guestinfo → environment variable → prompt**.
 
-### 8.5a Zero-touch: let first boot do it
+### 6.5a Zero-touch: let first boot do it
 
 The template ships an OpenRC service, `lab-tester-firstboot`, that runs
 `setup.sh` automatically when `guestinfo.lab.hub_url` and `guestinfo.lab.group`
@@ -812,7 +473,7 @@ rm /etc/lab-tester/.firstboot-done /etc/lab-tester/config
 rc-service lab-tester-firstboot start
 ```
 
-### 8.6 Verify on the dashboard
+### 6.6 Verify on the dashboard
 
 Open the hub dashboard at `http://<hub-ip>/` (port 80). The clone should appear
 in the endpoint list within a few seconds of `setup.sh` finishing. Test results
@@ -830,9 +491,9 @@ tail -f /var/log/lab-tester/test-cycle.log
 
 ---
 
-## 8A. Ongoing operation
+## 6A. Ongoing operation
 
-### 8A.1 Test types
+### 6A.1 Test types
 
 | Label | Test | Runs when |
 |-------|------|-----------|
@@ -873,7 +534,7 @@ wait an unanswered hop costs 6s, and a fully black-holed path to 15 hops costs
 whenever paths were broken, which is precisely when you want the data. It now
 runs with `-q 1 -m 10` on a slower schedule, plus on demand on failure.
 
-### 8A.2 Static targets
+### 6A.2 Static targets
 
 Addresses that run no agent — a gateway, a device loopback, an outside host —
 are held on the hub and merged into every node's cycle. Configure once, not
@@ -896,7 +557,7 @@ Valid test names are `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`,
 `smb`, `loss`, `smtp`; an unknown name is rejected with a 400 listing what it
 accepts. Nodes pick up changes on their next cycle, within 60 seconds.
 
-### 8A.3 Updating the agent scripts
+### 6A.3 Updating the agent scripts
 
 The hub serves the agent scripts from `/opt/lab-tester-hub/agent/`, and every
 node converges there on its 5-minute registration run. Editing the file *is*
@@ -927,7 +588,7 @@ Pin a node with `AGENT_AUTOUPDATE=false` in `/etc/lab-tester/config`.
 
 ---
 
-## 9. Troubleshooting
+## 7. Troubleshooting
 
 ### Node Cannot Reach the Hub
 
@@ -1061,3 +722,407 @@ grep -i error /var/log/messages | tail -20
   rc-update add|del <svc> default
   ```
 - **Persistent changes** require `lbu commit` only in diskless mode. Since we installed in `sys` mode, changes are written to disk normally.
+
+---
+
+## Appendix A: Manual Node Configuration (reference only)
+
+> **Superseded by `node/build-template.sh`**, exactly as Appendix B is by the
+> hub's script. Copy `node/` to the VM and run it: it installs the package
+> set above, populates `/usr/local/bin/lab-tester/`, installs the services
+> and the logrotate config, generates the shared SSH keypair, and enables
+> `dropbear`, `crond`, `lab-httpd`, `chronyd`, `open-vm-tools` and the
+> first-boot service. `DEPLOYMENT.md` stage 3 is the current procedure.
+>
+> **Do not follow the steps below as a build.** They assume a package set
+> you installed yourself, and a missing `openssh-client` or `iputils-ping`
+> produces a node that registers and reports green while its SSH and PMTU
+> tests can never pass (§4.2). This appendix exists only so you can read
+> what the script does, or troubleshoot a half-built node.
+
+Starting from the base VM (or a clone of it), configure it as a node.
+
+### A.1 Create Directory Structure
+
+```sh
+mkdir -p /etc/lab-tester
+mkdir -p /usr/local/bin/lab-tester
+mkdir -p /var/www/localhost/htdocs
+```
+
+### A.2 Copy Project Files
+
+> **The VM needs `scp` installed before any of this works.** A bare
+> `setup-alpine` install with only dropbear has no `scp` or `sftp` binary at
+> all — verified against a real dropbear + no-openssh-client Alpine box, a
+> plain `scp` attempt fails with `scp: not found` on the remote side. Run
+> `apk add --no-cache openssh-client-default` on the VM first (§4.2 installs
+> it anyway, but that's inside `build-template.sh`, which hasn't run yet at
+> this point).
+>
+> **Even then, use `scp -O`.** OpenSSH 9.0+ (the default on most systems
+> since 2022) makes `scp` try the SFTP protocol first, which needs
+> `/usr/lib/ssh/sftp-server` on the target — that binary ships with
+> `openssh-server`, not `openssh-client`, and this project never installs an
+> SSH server other than dropbear. `-O` forces the legacy SCP protocol, which
+> is a plain command dropbear runs like any other and works fine once `scp`
+> exists on the VM.
+
+From the machine hosting the project files, SCP them onto the VM. Adjust paths to match your source:
+
+```sh
+# From your workstation:
+scp -O node/scripts/register.sh    root@<VM_IP>:/usr/local/bin/lab-tester/
+scp -O node/scripts/test-cycle.sh  root@<VM_IP>:/usr/local/bin/lab-tester/
+scp -O node/scripts/setup.sh       root@<VM_IP>:/usr/local/bin/lab-tester/
+scp -O node/config.sample           root@<VM_IP>:/etc/lab-tester/config.sample
+scp -O node/services/iperf3.initd  root@<VM_IP>:/etc/init.d/iperf3
+scp -O node/services/smbd.initd    root@<VM_IP>:/etc/init.d/lab-smbd
+scp -O node/services/smb.conf      root@<VM_IP>:/etc/samba/smb.conf
+scp -O node/services/smtpd.initd   root@<VM_IP>:/etc/init.d/lab-smtpd
+scp -O node/services/smtpd.conf    root@<VM_IP>:/etc/smtpd/smtpd.conf
+scp -O node/services/lab-tester-httpd.conf root@<VM_IP>:/etc/httpd.conf
+scp -O node/services/crontab       root@<VM_IP>:/etc/lab-tester/crontab
+```
+
+> **Do not copy the crontab onto `/etc/crontabs/root`.** That replaces root's
+> crontab wholesale and destroys Alpine's `run-parts` entries, which are what
+> drive `/etc/periodic/*` — including the daily logrotate run. The disk then
+> fills with rotation installed but never triggered. `setup.sh` merges the
+> lab-tester block into the existing crontab instead; let it. (CLAUDE.md
+> constraint 12.)
+
+### A.3 Create the Configuration File
+
+```sh
+cp /etc/lab-tester/config.sample /etc/lab-tester/config
+vi /etc/lab-tester/config
+```
+
+Set the required values:
+
+```sh
+HUB_URL="http://<hub-ip>"
+GROUP_NAME="site-a"
+SUBNET="10.1.1.0/24"
+```
+
+> **Note:** For the golden image, you can leave placeholder values here. Each clone will need its own `GROUP_NAME` and `SUBNET`.
+
+### A.4 Set Permissions and Run Setup
+
+```sh
+chmod +x /usr/local/bin/lab-tester/*.sh
+chmod +x /etc/init.d/iperf3
+chmod +x /etc/init.d/lab-smbd
+chmod +x /etc/init.d/lab-smtpd
+/usr/local/bin/lab-tester/setup.sh
+```
+
+### A.5 Enable Services in OpenRC
+
+```sh
+rc-update add iperf3 default
+rc-update add crond default
+```
+
+> `lab-smbd` and `lab-smtpd` are not enabled here. Like `iperf3` under
+> `ENABLE_IPERF`, `setup.sh` only `rc-update add`s each when its
+> `ENABLE_SMB`/`ENABLE_SMTP` flag is `true` in the config — `build-template.sh`
+> installs the packages and service files but leaves both off by default
+> (CLAUDE.md test-type section).
+
+> **Alpine quirk:** Alpine uses OpenRC, not systemd. Services are managed with `rc-service <name> start|stop|restart` and enabled at boot with `rc-update add <name> <runlevel>`. The `default` runlevel is equivalent to systemd's multi-user target.
+
+Start the services now to verify:
+
+```sh
+rc-service iperf3 start
+rc-service crond start
+```
+
+### A.6 Set Up the Identity Web Page
+
+BusyBox httpd serves a simple page that identifies this node to its peers:
+
+```sh
+cat > /var/www/localhost/htdocs/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head><title>Lab Tester</title></head>
+<body>
+<h1>Lab Tester Node</h1>
+<p>Group: PLACEHOLDER</p>
+<p>Subnet: PLACEHOLDER</p>
+</body>
+</html>
+EOF
+```
+
+The `setup.sh` script or a first-boot script should populate the actual values from `/etc/lab-tester/config`.
+
+Start httpd:
+
+```sh
+rc-service lab-httpd start
+rc-update add lab-httpd default
+```
+
+The service is `lab-httpd`, not `httpd` — `rc-update add httpd` enables a
+service that does not exist, and the web server then fails to come back after a
+reboot, silently breaking every HTTP test in the mesh.
+
+### A.7 Verify
+
+```sh
+# Check services are running
+rc-status
+
+# Test local HTTP
+curl -s http://localhost/
+
+# Test iperf3 is listening
+iperf3 -c 127.0.0.1 -t 1
+
+# If ENABLE_SMB=true, test smbd is listening
+smbclient -N //127.0.0.1/labshare -c 'get probe.bin /dev/null'
+
+# loss test (always on, no flag) -- confirm fping actually landed
+fping -c 3 127.0.0.1
+
+# If ENABLE_SMTP=true, test smtpd is listening and safe
+smtpd -n -f /etc/smtpd/smtpd.conf     # config parses
+grep -n relay /etc/smtpd/smtpd.conf   # must be comments only
+printf 'EHLO test\r\nQUIT\r\n' | nc -w 3 127.0.0.1 25
+
+# Check cron is loaded
+crontab -l
+```
+
+---
+
+## Appendix B: Manual Hub Configuration (reference only)
+
+> **Superseded by `hub/build-template.sh`.** Copy `hub/` to the VM and run that
+> script: it installs the packages, populates `/opt/lab-tester-hub/`, writes
+> `hub.env` and `/etc/init.d/lab-tester-hub`, installs `set-static-ip`, sets the
+> lab credentials, and enables the hub, `chronyd`, `open-vm-tools` and dropbear.
+> `DEPLOYMENT.md` stage 2 is the current procedure.
+>
+> **Do not follow the steps below as a build.** They predate the script, they
+> omit `hub.env`, `set-static-ip`, the credentials and the service enables,
+> and B.5's init script is wrong (see the note there). This appendix exists
+> only so you can read what the script does, or troubleshoot a half-built hub.
+
+Starting from the base VM (or a fresh clone), configure it as the hub.
+
+### B.1 Create Directory Structure
+
+```sh
+mkdir -p /opt/lab-tester-hub/app
+mkdir -p /opt/lab-tester-hub/templates
+```
+
+### B.2 Copy Hub Files
+
+> **Same caveat as A.2.** A bare `setup-alpine` install has no `scp`/`sftp`
+> binary at all — `apk add --no-cache openssh-client-default` on the VM
+> first — and once it's there, use `scp -O` (legacy protocol): dropbear has
+> no `sftp-server`, so a modern client's default SFTP-based `scp` fails
+> even though the legacy protocol works fine.
+
+```sh
+# From your workstation:
+scp -O hub/app/__init__.py      root@<HUB_IP>:/opt/lab-tester-hub/app/
+scp -O hub/app/app.py           root@<HUB_IP>:/opt/lab-tester-hub/app/
+scp -O hub/app/config.py        root@<HUB_IP>:/opt/lab-tester-hub/app/
+scp -O hub/app/syslog_server.py root@<HUB_IP>:/opt/lab-tester-hub/app/
+scp -O hub/templates/dashboard.html root@<HUB_IP>:/opt/lab-tester-hub/templates/
+scp -O hub/templates/syslog.html    root@<HUB_IP>:/opt/lab-tester-hub/templates/
+scp -O hub/requirements.txt     root@<HUB_IP>:/opt/lab-tester-hub/
+scp -O hub/serve.py             root@<HUB_IP>:/opt/lab-tester-hub/
+scp -O hub/run.sh               root@<HUB_IP>:/opt/lab-tester-hub/
+```
+
+`serve.py` is the entrypoint the OpenRC service runs (B.5) — without it the
+service has nothing to start. `app/__init__.py` is empty but must exist, or
+`app.app` is not an importable package. `syslog_server.py` and `syslog.html` are the
+syslog receiver and its viewer (B.7), and they fail very differently if you
+forget one:
+
+- **`syslog_server.py` missing → the hub does not start at all.** `serve.py`
+  imports it at module level, so the service dies with `ModuleNotFoundError`
+  before `main()` runs: no dashboard, no `/register`, no result collection.
+  Copy it alongside `serve.py`, not as an optional extra.
+- **`syslog.html` missing → only `/syslog` breaks**, with a template error.
+  Everything else serves normally.
+
+### B.3 Install Python Dependencies
+
+```sh
+cd /opt/lab-tester-hub
+pip3 install -r requirements.txt --break-system-packages
+```
+
+If `py3-flask` was already installed via apk in step 4.3, the requirements file may have nothing extra to install. Either way, running pip against the requirements file ensures everything is covered.
+
+### B.4 Configure Static IP (Recommended)
+
+The hub needs a stable address so all nodes can reach it. Edit the network configuration:
+
+```sh
+vi /etc/network/interfaces
+```
+
+Replace the DHCP config with a static block:
+
+```
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address 10.0.0.10/24
+    gateway 10.0.0.1
+```
+
+Set DNS:
+
+```sh
+echo "nameserver 10.0.0.1" > /etc/resolv.conf
+```
+
+Restart networking:
+
+```sh
+rc-service networking restart
+```
+
+> **Alternative:** If your lab DHCP server supports reservations, you can keep DHCP on the hub and create a reservation by MAC address. This avoids hardcoding the IP in the VM.
+
+### B.5 Create an OpenRC Service for the Hub
+
+Create the init script:
+
+> **This snippet is wrong and kept only to be recognisable.** It runs
+> `run.sh`, the foreground debug launcher. What `build-template.sh` actually
+> installs is `command="/usr/bin/python3"` with
+> `command_args="/opt/lab-tester-hub/serve.py"`, plus a `start_pre` that sources
+> `hub.env`. Going through `run.sh` skips `serve.py`'s runtime `HUB_PORT`
+> handling, so a port set in `hub.env` is ignored.
+
+```sh
+cat > /etc/init.d/lab-tester-hub << 'EOF'
+#!/sbin/openrc-run
+
+name="lab-tester-hub"
+description="Lab Tester Hub Dashboard"
+command="/opt/lab-tester-hub/run.sh"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/lab-tester-hub.log"
+error_log="/var/log/lab-tester-hub.log"
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+
+chmod +x /etc/init.d/lab-tester-hub
+chmod +x /opt/lab-tester-hub/run.sh
+```
+
+Enable and start:
+
+```sh
+rc-update add lab-tester-hub default
+rc-service lab-tester-hub start
+```
+
+### B.6 Test the Dashboard
+
+From the hub VM itself:
+
+```sh
+curl -s http://localhost/
+```
+
+From another machine on the network, open `http://<hub-ip>` in a browser. You should see the dashboard (initially with no test results).
+
+### B.7 Verify the Syslog Receiver
+
+The hub listens for RFC3164 syslog (including the Cisco-style origin-id and
+`%FAC-SEV-MNEMONIC` framing many network vendors emit) on UDP/514 and stores
+it in the same database as the test results, so a red cell in the matrix can
+be read against what a network device on the path said at that moment. This
+is entirely optional — nothing in the mesh requires any device to log here.
+
+Nothing needs enabling — `serve.py` starts the listener. Confirm it bound:
+
+```sh
+rc-service lab-tester-hub restart
+grep syslog /var/log/lab-tester-hub.log     # or the service's stdout
+```
+
+Expect `[syslog] listening on 0.0.0.0:514 (cap 300000 rows)`. If instead you
+see `[syslog] not listening on 0.0.0.0:514 — ...`, the usual causes are the
+service not running as root (514 is privileged) or something else already bound
+to it. The hub keeps serving results either way — a syslog failure is never
+allowed to take the collector down with it.
+
+Send a test message from the hub itself:
+
+```sh
+# BusyBox's logger has no network option and util-linux is not installed, so
+# send the packet with the Python that is already here for the hub itself.
+python3 -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b'<190>1: SW-TEST: %SYS-5-CONFIG_I: hello from the hub', ('127.0.0.1', 514))"
+curl -s 'http://localhost/api/syslog?minutes=5'
+```
+
+You should get one row back, with `host` `SW-TEST` and `mnemonic`
+`%SYS-5-CONFIG_I`. An empty array means the packet was sent but not stored —
+check the listener line above rather than the device config.
+
+If the lab includes network devices you want to correlate against, point any
+of them at the hub the same way you would any syslog server, e.g.:
+
+```
+logging host <hub-ip>
+logging trap informational
+service timestamps log datetime msec show-timezone
+```
+
+(exact syntax depends on the device; the hub only needs RFC3164/UDP on 514).
+
+Open `http://<hub-ip>/syslog` and confirm messages appear. Filters are window,
+sender, severity and a substring search; `severity=4` means *warning or worse*,
+matching how most devices' own logging-severity filters read. Lines the
+parser could not read have no severity and stay visible under every severity
+filter, by design.
+
+The header shows the hub's clock state from `chronyc tracking` (green when
+disciplined, amber on the `local stratum 10` fallback or >100 ms out, red when
+unsynchronised). It is there because the correlation links depend on it: a
+±5 min window pinned around a test result is only as good as the clock that
+stamped it. `chronyd` is installed and enabled by `build-template.sh`; if the
+indicator reads "clock: unknown", check `rc-service chronyd status`.
+
+From the dashboard, clicking a matrix cell now gives a `syslog ±5 min` link per
+test card, pinned to that sample, plus per-group links in the pair header.
+Those filter on the device's *syslog* hostname — the name it puts in its own
+messages — so if a group link is empty while the plain window link shows the
+message, that device logs under a different name than the node's
+`guestinfo.lab.group` value. Match the names on the device side (many let you
+set a logging origin-id or hostname) if you want those links to line up.
+
+Two things worth knowing before you rely on it:
+
+- **It is not an audit trail.** UDP syslog is lossy and unauthenticated —
+  anything that can reach the segment can inject messages. Treat it as a
+  troubleshooting aid.
+- **It is capped by rows, not time** (`HUB_SYSLOG_MAX_ROWS`, default 300000).
+  A device left at debug level will roll the window shorter than you expect;
+  that is the cap doing its job, not lost messages.
+
+To disable it entirely, set `HUB_SYSLOG_ENABLED=false` in `hub.env`.
