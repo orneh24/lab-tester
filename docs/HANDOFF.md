@@ -254,7 +254,7 @@ in the tree and no defaulting of `ROUTER_NAME`.
 The argument for reducing it still stands: each required variable is another way
 for a clone to fail silently, since an unregistered VM is simply invisible in
 the matrix rather than visibly broken. But until someone writes the derivation,
-all three must be set per clone — `BUILD_GUIDE` §8.4 is the accurate account.
+all three must be set per clone — `BUILD_GUIDE` §6.4 is the accurate account.
 This entry described the intended design as delivered for some time; corrected
 2026-09-10.
 
