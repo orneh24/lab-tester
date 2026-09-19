@@ -70,6 +70,7 @@ skips both. Ports below 1024 need root, hence `HUB_SYSLOG_PORT` above here.
 
 | File | Covers |
 |---|---|
+| [`docs/QUICKSTART.md`](docs/QUICKSTART.md) | One-page command/config reference for an experienced sysadmin |
 | [`CLAUDE.md`](CLAUDE.md) | Architecture, design decisions, constraints that must not regress |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Build order and checklist, stage by stage |
 | [`docs/BUILD_GUIDE.md`](docs/BUILD_GUIDE.md) | Step-by-step detail for each stage |
