@@ -169,6 +169,13 @@ a:hover { text-decoration: underline; }
     left: 0;
     z-index: 3;
 }
+.matrix th .ip {
+    font-weight: 400;
+    font-size: 10px;
+    color: var(--text-dim);
+    opacity: 0.7;
+    margin-left: 4px;
+}
 .matrix thead th {
     top: 0;
     text-align: center;
@@ -578,7 +585,10 @@ a:hover { text-decoration: underline; }
         <div class="section endpoints-section">
             <div class="section-header">
                 <span>Registered Endpoints</span>
-                <span id="stale-warning" style="color:var(--yellow);display:none">stale detected</span>
+                <span class="hdr-actions">
+                    <span id="stale-warning" style="color:var(--yellow);display:none">stale detected</span>
+                    <button class="btn-small" id="btn-remove-all-endpoints">remove all</button>
+                </span>
             </div>
             <div class="section-body">
                 <table class="ep-table" id="ep-table">
@@ -843,6 +853,14 @@ a:hover { text-decoration: underline; }
     // ---------------------------------------------------------------
     // Matrix
     // ---------------------------------------------------------------
+
+    // Small muted IP label next to a node's name in the matrix headers.
+    // Endpoints always carry an ip from /register, but stay defensive since
+    // this renders straight from the API response.
+    function nameIp(ep) {
+        return ep && ep.ip ? "<span class='ip'>" + esc(ep.ip) + "</span>" : "";
+    }
+
     function buildLookup() {
         // key: source|target|type -> latest result
         var map = {};
@@ -865,14 +883,14 @@ a:hover { text-decoration: underline; }
         // Header row
         var hrow = "<th class='origin'>src \\ dst</th>";
         for (var j = 0; j < hosts.length; j++) {
-            hrow += "<th>" + esc(hosts[j]) + "</th>";
+            hrow += "<th>" + esc(hosts[j]) + nameIp(endpoints[j]) + "</th>";
         }
         thead.innerHTML = "<tr>" + hrow + "</tr>";
 
         // Body
         var html = "";
         for (var i = 0; i < hosts.length; i++) {
-            html += "<tr><th>" + esc(hosts[i]) + "</th>";
+            html += "<tr><th>" + esc(hosts[i]) + nameIp(endpoints[i]) + "</th>";
             for (var j = 0; j < hosts.length; j++) {
                 if (i === j) {
                     html += "<td class='self'>&mdash;</td>";
@@ -1271,6 +1289,25 @@ a:hover { text-decoration: underline; }
         }
         return "Latency: <span class='latency-val'>" + ms.toFixed(1) + " ms</span>";
     }
+
+    // ---------------------------------------------------------------
+    // Remove all registered endpoints ("flush and start over"). Reuses the
+    // existing per-hostname DELETE rather than adding a bulk route -- any
+    // node still running just re-registers on its next 5-minute cycle, so
+    // this is a UI convenience, not a destructive operation the hub needs
+    // to guard specially.
+    // ---------------------------------------------------------------
+    document.getElementById("btn-remove-all-endpoints").addEventListener("click", function() {
+        if (endpoints.length === 0) return;
+        if (!confirm("Remove all " + endpoints.length + " registered endpoint" +
+                     (endpoints.length !== 1 ? "s" : "") + "? Nodes still running will " +
+                     "re-appear on their next registration (within 5 minutes).")) {
+            return;
+        }
+        Promise.all(endpoints.map(function(ep) {
+            return fetch("/endpoints/" + encodeURIComponent(ep.hostname), {method: "DELETE"});
+        })).then(function() { refresh(); });
+    });
 
     // ---------------------------------------------------------------
     // Add / remove static targets

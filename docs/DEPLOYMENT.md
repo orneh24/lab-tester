@@ -42,7 +42,7 @@ hub clone):
 
 ```sh
 sh /root/lab-tester/install.sh hub -y   # asks nothing; or: sh hub/build-template.sh
-set-static-ip <hub-ip>/<cidr> <gateway>
+set-static-ip <hub-ip>/<cidr> <gateway> [dns] [hostname]
 rc-service networking restart
 rc-service lab-tester-hub start
 # confirm: http://<hub-ip>/ loads

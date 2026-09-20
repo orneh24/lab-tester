@@ -44,6 +44,27 @@ and intent only.
 
 ## Recent changes
 
+**`set-static-ip` gains optional DNS and hostname arguments (2026-09-20).**
+
+`set-static-ip <ip/cidr> <gateway> [dns] [hostname]` — two new optional
+trailing arguments:
+- `[dns]` writes `nameserver <dns>` to `/etc/resolv.conf` after configuring
+  the interface. Previously the helper always left DNS unconfigured and
+  just printed a reminder to edit `/etc/resolv.conf` by hand (see the
+  `resolv.conf` cleanup gap entry below — this is the same gap, now
+  closable in one command instead of a manual edit).
+- `[hostname]` sets `/etc/hostname`, calls `hostname <name>`, and updates
+  (or appends) the `127.0.1.1` line in `/etc/hosts` — same technique
+  `node/scripts/setup.sh` already uses for the node's own hostname, so the
+  hub gains no second way of doing the same thing. A no-op if the current
+  hostname already matches.
+
+`hub-setup.sh`'s interactive wizard still only prompts for IP and gateway
+and calls `set-static-ip` with exactly those two arguments — it does not
+yet offer DNS or hostname prompts, so both new arguments are reachable
+only by invoking `set-static-ip` directly or via `guestinfo`-driven
+automation that chooses to pass them.
+
 **Guided install and a node first-login setup prompt (2026-09-20).**
 
 Three new mechanisms, mirroring what the Hub already had one-for-one rather
@@ -473,6 +494,11 @@ but **nothing here works today**:
 
 ## Open items
 
+- **Renaming.** `lab-tester` (and possibly the separate `lab-butler` project)
+  may get renamed — current name is generic and a poor search/package term.
+  Candidate: `lab-scout` (exact-name collision with an unrelated, low-traffic
+  GitHub project, `mithr4ndir/lab-scout`; judged low risk). No decision made,
+  no renaming done yet — this is tracking only.
 - **Syslog has never run on the real hub VM.** Everything so far is a local
   Python process on a workstation. Confirm the OpenRC service starts the
   listener, that UDP/514 binds under it (514 is privileged — the service runs

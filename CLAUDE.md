@@ -21,7 +21,7 @@ Diagram: `docs/TOPOLOGY.md`.
 - Alpine Linux VM, ~192 MB RAM
 - NOT a test participant — purely infrastructure
 - Sits on a segment routable from all node subnets and the workstation
-- Static IP (helper: `set-static-ip <ip/cidr> <gateway>`)
+- Static IP (helper: `set-static-ip <ip/cidr> <gateway> [dns] [hostname]`)
 - Runs:
   - Flask API (registry + result collector) served by **waitress**, not the
     Flask dev server (which is single-threaded and would queue the mesh's

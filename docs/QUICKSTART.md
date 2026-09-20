@@ -25,7 +25,7 @@ gets baked into the node image):
 
 ```sh
 sh /root/lab-tester/install.sh hub -y   # or: sh hub/build-template.sh directly
-set-static-ip <hub-ip>/<cidr> <gateway>   # or guestinfo.hub.ip/.gateway pre-boot
+set-static-ip <hub-ip>/<cidr> <gateway> [dns] [hostname]   # or guestinfo.hub.ip/.gateway pre-boot
 rc-service networking restart
 rc-service lab-tester-hub start
 ```

@@ -302,23 +302,23 @@ log "Services enabled"
 log "Creating first-boot instructions"
 cat > /etc/motd <<'MOTDEOF'
 
-  ┌───────────────────────────────────────────────┐
-  │         lab-tester hub VM                     │
-  │                                               │
-  │  Dashboard: http://<this-vm-ip>/              │
-  │  Config:    /opt/lab-tester-hub/hub.env       │
-  │  DB:        /var/lib/lab-tester/hub.db        │
-  │  Logs:      rc-service lab-tester-hub status  │
-  │                                               │
-  │  Not configured yet? Log in and run:          │
-  │    hub-setup.sh                               │
-  │  (runs automatically at first login if the    │
-  │   static IP hasn't been set)                  │
-  │                                               │
-  │  If IP needs changing later:                  │
-  │    set-static-ip <ip/cidr> <gateway>          │
-  │    rc-service networking restart              │
-  └───────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────┐
+  │                   lab-tester hub VM                    │
+  │                                                        │
+  │   Dashboard: http://<this-vm-ip>/                      │
+  │   Config:    /opt/lab-tester-hub/hub.env               │
+  │   DB:        /var/lib/lab-tester/hub.db                │
+  │   Logs:      rc-service lab-tester-hub status          │
+  │                                                        │
+  │   Not configured yet? Log in and run:                  │
+  │     hub-setup.sh                                       │
+  │   (runs automatically at first login if the            │
+  │    static IP hasn't been set)                          │
+  │                                                        │
+  │   If IP needs changing later:                          │
+  │     set-static-ip <ip/cidr> <gateway> [dns] [hostname] │
+  │     rc-service networking restart                      │
+  └────────────────────────────────────────────────────────┘
 
 MOTDEOF
 
@@ -329,19 +329,21 @@ log "Creating static IP helper script"
 cat > /usr/local/bin/set-static-ip <<'SIPEOF'
 #!/bin/sh
 # Helper to configure a static IP on the hub VM.
-# Usage: set-static-ip <ip/cidr> <gateway>
-# Example: set-static-ip 10.0.0.100/24 10.0.0.1
+# Usage: set-static-ip <ip/cidr> <gateway> [dns] [hostname]
+# Example: set-static-ip 10.0.0.100/24 10.0.0.1 10.0.0.53 lab-tester-hub
 
 set -eu
 
 if [ $# -lt 2 ]; then
-    echo "Usage: set-static-ip <ip/cidr> <gateway>"
-    echo "Example: set-static-ip 10.0.0.100/24 10.0.0.1"
+    echo "Usage: set-static-ip <ip/cidr> <gateway> [dns] [hostname]"
+    echo "Example: set-static-ip 10.0.0.100/24 10.0.0.1 10.0.0.53 lab-tester-hub"
     exit 1
 fi
 
 IP_CIDR="$1"
 GATEWAY="$2"
+DNS="${3:-}"
+NEW_HOSTNAME="${4:-}"
 
 # Detect the primary interface
 IFACE=$(ip -o link show | awk -F': ' '!/lo/{print $2; exit}')
@@ -358,8 +360,29 @@ EOF
 
 echo "Static IP configured on ${IFACE}: ${IP_CIDR} via ${GATEWAY}"
 echo "Restart networking: rc-service networking restart"
-echo "DNS is not configured -- edit /etc/resolv.conf by hand if the hub needs"
-echo "outbound resolution (e.g. a chrony NTP pool hostname)."
+
+if [ -n "$DNS" ]; then
+    printf 'nameserver %s\n' "$DNS" > /etc/resolv.conf
+    echo "DNS configured: ${DNS} (written to /etc/resolv.conf)"
+else
+    echo "DNS is not configured -- pass a third argument, or edit"
+    echo "/etc/resolv.conf by hand, if the hub needs outbound resolution"
+    echo "(e.g. a chrony NTP pool hostname)."
+fi
+
+if [ -n "$NEW_HOSTNAME" ]; then
+    CURRENT_HOSTNAME=$(hostname)
+    if [ "$CURRENT_HOSTNAME" != "$NEW_HOSTNAME" ]; then
+        printf '%s\n' "$NEW_HOSTNAME" > /etc/hostname
+        hostname "$NEW_HOSTNAME"
+        if grep -q "127.0.1.1" /etc/hosts 2>/dev/null; then
+            sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t${NEW_HOSTNAME}/" /etc/hosts
+        else
+            printf '127.0.1.1\t%s\n' "$NEW_HOSTNAME" >> /etc/hosts
+        fi
+        echo "Hostname set: ${CURRENT_HOSTNAME} -> ${NEW_HOSTNAME}"
+    fi
+fi
 SIPEOF
 
 chmod +x /usr/local/bin/set-static-ip
@@ -414,7 +437,7 @@ log "A lab normally has exactly one hub, so converting this VM to a vCenter"
 log "template is optional (BUILD_GUIDE.md Sec 5.5) -- most labs can just"
 log "finish configuring it in place, right here:"
 log ""
-log "  set-static-ip <ip/cidr> <gateway>   # or let hub-setup.sh prompt at next login"
+log "  set-static-ip <ip/cidr> <gateway> [dns] [hostname]   # or let hub-setup.sh prompt at next login"
 log "  rc-service networking restart"
 log "  rc-service lab-tester-hub start"
 log "  Dashboard: http://<this-vm-ip>/"

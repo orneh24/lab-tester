@@ -30,7 +30,7 @@ gets baked into the node image):
 
 ```sh
 sh /root/lab-tester/install.sh hub -y   # asks nothing, runs hub/build-template.sh
-set-static-ip <hub-ip>/<cidr> <gateway>   # or guestinfo.hub.ip/.gateway pre-boot
+set-static-ip <hub-ip>/<cidr> <gateway> [dns] [hostname]   # or guestinfo.hub.ip/.gateway pre-boot
 rc-service networking restart
 rc-service lab-tester-hub start
 ```
