@@ -17,7 +17,7 @@ not a real lab. See [Running the hub locally](#running-the-hub-locally).*
 
 ```sh
 # base VM: setup-alpine, then git clone the repo, then clone the VM twice
-apk add --no-cache git && git clone <repo-url> /root/lab-tester
+apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester
 
 # Hub (build first — its IP gets baked into the node image)
 sh /root/lab-tester/hub/build-template.sh

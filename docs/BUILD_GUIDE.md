@@ -26,7 +26,7 @@ under the hood; do not follow them as build steps.
 
 Before starting, make sure you have:
 
-- **vCenter / ESXi 7.0 access** with permissions to create VMs, templates, and port groups
+- **vCenter / ESXi access** with permissions to create VMs, templates, and port groups
 - **Alpine Linux Virtual ISO** -- download the `alpine-virt-<version>-x86_64.iso` image from [alpinelinux.org/downloads](https://alpinelinux.org/downloads/). The "Virtual" edition is optimized for hypervisors and is under 60 MB.
 - **Network information:**
   - A management/routable subnet where the hub VM will live (IP address, gateway, DNS)
@@ -46,15 +46,9 @@ Before starting, make sure you have:
 ## 2. Base VM Creation in vCenter
 
 Create a single base VM that will later be configured for either role.
-
-### 2.1 Create New Virtual Machine
-
-1. In vCenter, right-click your target ESXi host or cluster and select **New Virtual Machine**.
-2. Choose **Create a new virtual machine**.
-3. Name it something like `alpine-lab-tester-base`.
-4. Select the target datastore.
-
-### 2.2 Recommended VM Specs
+Creating the VM, mounting the ISO, and booting to a console are standard
+vCenter operations, not covered here — the one thing worth getting right up
+front is sizing, since it's shared by both roles:
 
 | Setting         | Value                                |
 |-----------------|--------------------------------------|
@@ -68,17 +62,7 @@ Create a single base VM that will later be configured for either role.
 
 > **Note:** Production nodes need only ~128 MB RAM. The hub needs ~192 MB. Using 256 MB for the base keeps both options open. You can reduce RAM after cloning if desired.
 
-### 2.3 Mount the ISO
-
-1. Edit the VM settings.
-2. Under **CD/DVD Drive**, select **Datastore ISO File** and browse to the uploaded Alpine Virtual ISO.
-3. Check **Connect at power on**.
-
-### 2.4 Boot the VM
-
-1. Power on the VM.
-2. Open a console (Web Console or VMRC).
-3. You should see the Alpine boot prompt. Log in as `root` (no password).
+Boot to the Alpine boot prompt and log in as `root` (no password) to continue.
 
 ---
 
@@ -298,9 +282,8 @@ Dropbear automatically regenerates missing host keys on service start, so no add
 
 ### 5.5 Convert to Template in vCenter
 
-1. In vCenter, right-click the powered-off VM.
-2. Select **Template > Convert to Template**.
-3. Name it descriptively, e.g., `lab-tester-node-template-v1`.
+Standard vCenter template conversion, not covered here. Name it
+descriptively, e.g. `lab-tester-node-template-v1`.
 
 > Do this once for the node clone. Since there is typically only one hub,
 > you may prefer to keep the hub clone as a regular VM instead of
@@ -313,11 +296,8 @@ Dropbear automatically regenerates missing host keys on service start, so no add
 
 ### 6.1 Clone from Template
 
-1. In vCenter, right-click the template.
-2. Select **New VM from This Template**.
-3. Name the VM to match its role, e.g., `test-site-a` or `test-dmz`.
-4. Select the target host and datastore.
-5. Choose **Thin Provision** for the virtual disk format.
+Standard vCenter clone-from-template, thin provisioned, not covered here.
+Name the VM to match its role, e.g. `test-site-a` or `test-dmz`.
 
 ### 6.2 Assign the Correct Port Group
 
@@ -332,10 +312,8 @@ under test to get an IP via DHCP and to test that specific link.
 
 ### 6.3 Adjust RAM (Optional)
 
-If you used 256 MB for the base, you can reduce node clones to 128 MB:
-
-1. Edit VM settings while powered off.
-2. Set Memory to **128 MB**.
+If you used 256 MB for the base, node clones can drop to 128 MB — edit VM
+settings while powered off.
 
 ### 6.4 Supply the per-node configuration
 

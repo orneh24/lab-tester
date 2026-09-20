@@ -24,7 +24,7 @@ in the numbered stages below; come back to them when something doesn't work.
 ```sh
 # 1. One base Alpine VM, installed by hand (interactive — see BUILD_GUIDE §1-3)
 setup-alpine
-# then, once: apk add --no-cache git && git clone <repo-url> /root/lab-tester
+# then, once: apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester
 # (dropbear alone can't receive scp/sftp — see stage 1's note if git isn't
 # reachable from the VM)
 # then snapshot/clone it twice: one clone becomes the hub, one becomes the
@@ -79,7 +79,7 @@ Everything downstream bakes these in. Settle them before touching a VM.
 - [ ] One VM from the alpine-virt ISO (BUILD_GUIDE 2–3)
 - [ ] `setup-alpine`, community repository enabled, core packages installed (4.1–4.2)
 - [ ] Get the project files onto the VM **once, before cloning**:
-      `apk add --no-cache git && git clone <repo-url> /root/lab-tester`.
+      `apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester`.
       `git` lives in Alpine's `main` repo, so this works even before
       community is enabled. Both `hub/` and `node/` come along in the one
       checkout, so this replaces copying files separately onto the hub and
@@ -141,6 +141,8 @@ Verify before moving on:
 - [ ] `sysctl net.ipv4.ip_forward` returns 0
 - [ ] `rc-service lldpd status` is running, and `lldpcli show neighbors`
       names the switch port on the other end
+- [ ] `rc-service open-vm-tools status` is running — without it, neither
+      `guestinfo.hub.*` zero-touch setup nor `vmware-rpctool` works
 
 **Notes on the checks above:**
 
@@ -183,8 +185,9 @@ Verify before moving on:
       absence
 - [ ] Run `setup.sh`. It does **not** configure chrony — nodes sync to
       Alpine's default NTP pool, and nothing points them at the hub
-- [ ] Verify dropbear, httpd, iperf3, crond and lldpd are running; identity
-      page renders. If `ENABLE_SMB=true`, verify `lab-smbd` is running too —
+- [ ] Verify dropbear, httpd, iperf3, crond, lldpd and open-vm-tools are
+      running; identity page renders. If `ENABLE_SMB=true`, verify
+      `lab-smbd` is running too —
       it is not started by default (lldpd, unlike smb, always is). Same for
       `lab-smtpd` under `ENABLE_SMTP`, plus `grep -n relay /etc/smtpd/smtpd.conf`
       returning nothing but comments before trusting it with a real network path

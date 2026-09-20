@@ -199,7 +199,7 @@ with `AGENT_AUTOUPDATE=false`.
 - Endpoints unseen for `HUB_STALE_ENDPOINT_HOURS` (default 6) are dropped
 
 ## Infrastructure
-- ESXi 7.0 + vCenter, `open-vm-tools` on both roles
+- ESXi + vCenter, `open-vm-tools` on both roles
 - Two separate golden templates, each built by its own `build-template.sh`
 - Default credentials: **root / lab123** (isolated lab only) — override with
   `LAB_ROOT_PASSWORD` when running either `build-template.sh`
