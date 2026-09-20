@@ -1,0 +1,15 @@
+# Everything under hub/ and node/ that isn't a doc or image ends up on an
+# Alpine VM, parsed by a POSIX shell, OpenRC, cron, or a C daemon (samba,
+# OpenSMTPD, busybox httpd) that does not tolerate a CRLF shebang or config
+# line. Pin these to LF regardless of the committer's local core.autocrlf,
+# so a Windows contributor's checkout can't silently reintroduce CRLF into
+# the stored blob.
+
+*.sh    text eol=lf
+*.initd text eol=lf
+*.py    text eol=lf
+
+node/services/crontab          text eol=lf
+node/services/*.conf           text eol=lf
+node/config.sample             text eol=lf
+hub/requirements.txt           text eol=lf
