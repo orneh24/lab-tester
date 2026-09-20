@@ -94,17 +94,24 @@ else
     _traceroute_interval="${TRACEROUTE_INTERVAL:-300}"
     _autoupdate="${AGENT_AUTOUPDATE:-true}"
 
+    # `|| _var=""` guards each read: firstboot only checks guestinfo.lab.hub_url
+    # and .group before calling this script, not .subnet, so a clone missing
+    # just the subnet key hits this prompt with stdin closed (firstboot.initd
+    # redirects it from /dev/null so a prompt can't hang the boot). Without the
+    # guard, `read`'s EOF exit status would abort the whole script under set -e
+    # before cron or services ever got installed -- worse than the tolerated
+    # "hub not up yet" case below.
     if [ -z "$_hub_url" ]; then
         printf 'Hub URL (e.g., http://10.0.0.100): '
-        read -r _hub_url
+        read -r _hub_url || _hub_url=""
     fi
     if [ -z "$_group_name" ]; then
         printf 'Group name (e.g., site-a): '
-        read -r _group_name
+        read -r _group_name || _group_name=""
     fi
     if [ -z "$_subnet" ]; then
         printf 'Subnet (e.g., 10.1.1.0/24): '
-        read -r _subnet
+        read -r _subnet || _subnet=""
     fi
 
     cat > "$CONFIG_FILE" <<EOF
