@@ -35,14 +35,14 @@ SUBNET=
 # ---------------------------------------------------------------------
 
 # Explicit hostname for this node. Leave empty to derive it as
-# <HOSTNAME_PREFIX>-<group>, e.g. test-site-a.
+# <HOSTNAME_PREFIX>-<group>, e.g. test-node-site-a.
 #
 # It must be unique across the lab: the hub keys its endpoint table by
 # hostname, so two nodes sharing a name overwrite each other and the mesh
 # collapses to a single entry.
 LAB_HOSTNAME=
 
-HOSTNAME_PREFIX=test
+HOSTNAME_PREFIX=test-node
 
 # ---------------------------------------------------------------------
 # Tests

@@ -20,6 +20,11 @@ whole of node/hub configuration, covered in `DEPLOYMENT.md` stages 2-3, not
 in this guide. The appendices exist only to show what those scripts do
 under the hood; do not follow them as build steps.
 
+`install.sh` (repo root) picks the role and runs the matching
+`build-template.sh` for you — run it per clone once each is on its own
+network segment (stages 2/3), not on the shared base VM. It refuses to run
+on a VM that already looks built into a role.
+
 ---
 
 ## 1. Prerequisites
@@ -35,7 +40,9 @@ Before starting, make sure you have:
 - **The lab-tester project files**, reachable one of two ways:
   - **Git (recommended):** the repo's clone URL, reachable from the VM.
     `git` is in Alpine's `main` repository, so `git clone` works right after
-    `setup-alpine`, before you'd even enable `community` (§4.1)
+    `setup-alpine`, before you'd even enable `community` (§4.1). Once
+    cloned, `sh install.sh` at the repo root is the entry point — it asks
+    hub or node and runs the matching `build-template.sh`
   - **SCP (fallback):** the files on a machine you can SCP from. A bare
     `setup-alpine` install has no `scp`/`sftp` binary at all — see
     Appendix A.2 / B.2 before trying this
@@ -211,17 +218,21 @@ Before converting to a template, clean up the VM so each clone starts fresh.
 > right before 5.3. 5.1/5.2 are kept below only as reference for what the
 > scripts do; 5.3-5.5 are the real remaining manual steps, for both roles.
 >
-> **But if you then verified the image** — set `/etc/lab-tester/config` and
-> ran `setup.sh` to confirm the node registers against the live hub, as
-> DEPLOYMENT stage 3 has you do — that verification just undid the config
-> and hostname part of 5.1's cleanup: `setup.sh` writes a real config and
-> sets a real hostname. **Redo those two before 5.3**, or the template ships
-> with a live `GROUP_NAME`/`SUBNET` and a real hostname baked in, and every
-> clone from it starts with that same hostname — the collision constraint 1
-> exists to prevent.
+> **But if you then verified the image** — logged in and let `node-setup.sh`
+> prompt you (or set `/etc/lab-tester/config` and ran `setup.sh` directly) to
+> confirm the node registers against the live hub, as DEPLOYMENT stage 3 has
+> you do — that verification just undid the config, hostname and login-stamp
+> parts of 5.1's cleanup: `setup.sh` writes a real config and sets a real
+> hostname, and `node-setup.sh` writes `/etc/lab-tester/.setup-done`.
+> **Redo all three before 5.3**, or the template ships with a live
+> `GROUP_NAME`/`SUBNET` and a real hostname baked in (every clone from it
+> starts with that same hostname — the collision constraint 1 exists to
+> prevent), *and* with the login stamp present, so `node-setup.sh` never
+> even offers the prompt on any clone made from it.
 >
 > ```sh
-> rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+> rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
+>       /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
 > printf 'lab-tester-template\n' > /etc/hostname
 > ```
 >
@@ -297,7 +308,7 @@ descriptively, e.g. `lab-tester-node-template-v1`.
 ### 6.1 Clone from Template
 
 Standard vCenter clone-from-template, thin provisioned, not covered here.
-Name the VM to match its role, e.g. `test-site-a` or `test-dmz`.
+Name the VM to match its role, e.g. `test-node-site-a` or `test-node-dmz`.
 
 ### 6.2 Assign the Correct Port Group
 
@@ -353,7 +364,7 @@ flexible anyway since they can carry the whole configuration.
 5. OK → OK, then power on.
 
 `guestinfo.lab.hostname` is optional — omit it and the name is derived from
-the group as `test-<group>` (so `site-a` becomes `test-site-a`).
+the group as `test-node-<group>` (so `site-a` becomes `test-node-site-a`).
 
 **With PowerCLI**, which is worth it from the second node onward:
 
@@ -362,7 +373,7 @@ $vm = Get-VM "lab-test-site-a"
 $vm | New-AdvancedSetting -Name guestinfo.lab.hub_url  -Value "http://10.0.0.100" -Confirm:$false
 $vm | New-AdvancedSetting -Name guestinfo.lab.group    -Value "site-a"            -Confirm:$false
 $vm | New-AdvancedSetting -Name guestinfo.lab.subnet   -Value "10.1.1.0/24"       -Confirm:$false
-$vm | New-AdvancedSetting -Name guestinfo.lab.hostname -Value "test-site-a"       -Confirm:$false
+$vm | New-AdvancedSetting -Name guestinfo.lab.hostname -Value "test-node-site-a"  -Confirm:$false
 ```
 
 Deploying the whole lab in one pass:
@@ -385,7 +396,7 @@ foreach ($n in $lab) {
     $vm | New-AdvancedSetting -Name guestinfo.lab.hub_url  -Value $hub       -Confirm:$false
     $vm | New-AdvancedSetting -Name guestinfo.lab.group    -Value $n.Group   -Confirm:$false
     $vm | New-AdvancedSetting -Name guestinfo.lab.subnet   -Value $n.Subnet  -Confirm:$false
-    $vm | New-AdvancedSetting -Name guestinfo.lab.hostname -Value ("test-" + $n.Group.ToLower()) -Confirm:$false
+    $vm | New-AdvancedSetting -Name guestinfo.lab.hostname -Value ("test-node-" + $n.Group.ToLower()) -Confirm:$false
 
     Start-VM -VM $vm -Confirm:$false
 }
@@ -406,7 +417,7 @@ govc vm.change -vm lab-test-site-a \
   -e guestinfo.lab.hub_url=http://10.0.0.100 \
   -e guestinfo.lab.group=site-a \
   -e guestinfo.lab.subnet=10.1.1.0/24 \
-  -e guestinfo.lab.hostname=test-site-a
+  -e guestinfo.lab.hostname=test-node-site-a
 ```
 
 Confirm from inside the guest that the keys arrived:
@@ -420,8 +431,10 @@ error, and `setup.sh` treats it as "fall back to the next source".
 
 #### Option B — interactive
 
-Skip the keys entirely and let `setup.sh` prompt for the values. Fine for one
-or two nodes, tedious past that.
+Skip the keys entirely and let `setup.sh` prompt for the values — or, on a
+freshly-booted clone, just log in: `node-setup.sh` offers exactly this
+automatically at first login (§6.5b). Fine for one or two nodes, tedious
+past that.
 
 ### 6.5 Run setup and register
 
@@ -429,12 +442,21 @@ or two nodes, tedious past that.
 /usr/local/bin/lab-tester/setup.sh
 ```
 
-This writes `/etc/lab-tester/config`, sets the hostname, enables the services,
-installs the cron entries, builds the identity page, and performs an initial
-registration against the hub. It is safe to re-run — an existing config file is
-kept, and a live `guestinfo.lab.hostname` still takes effect.
+Or via the wizard — same effect, plus the permission gate and stamp
+bookkeeping described in §6.5b:
 
-Precedence for each value is: **guestinfo → environment variable → prompt**.
+```sh
+node-setup.sh
+```
+
+Either writes `/etc/lab-tester/config`, sets the hostname, enables the
+services, installs the cron entries, builds the identity page, and performs
+an initial registration against the hub. It is safe to re-run — an existing
+config file is kept, and a live `guestinfo.lab.hostname` still takes effect.
+
+Precedence for each value is: **guestinfo → environment variable → prompt**,
+except `SUBNET`, which has one extra fallback before the prompt: derived
+from the interface's own DHCP lease.
 
 ### 6.5a Zero-touch: let first boot do it
 
@@ -445,8 +467,11 @@ power on and the node configures, names itself, and registers.
 
 If the keys are absent the service stands down and leaves the MOTD
 instructions, because `setup.sh` would otherwise block on prompts with nobody
-attached. It stamps `/etc/lab-tester/.firstboot-done` on success so it runs
-once, and logs to `/var/log/lab-tester/firstboot.log`.
+attached — the login prompt in §6.5b covers that case instead. On success it
+stamps two files: `/etc/lab-tester/.firstboot-done` (this service's own
+re-entry guard, its only reader) and `/etc/lab-tester/.setup-done` with
+content `configured (guestinfo)` (the login prompt's shared stamp — see
+§6.5b), and logs to `/var/log/lab-tester/firstboot.log`.
 
 To re-run it deliberately:
 
@@ -454,6 +479,64 @@ To re-run it deliberately:
 rm /etc/lab-tester/.firstboot-done /etc/lab-tester/config
 rc-service lab-tester-firstboot start
 ```
+
+The two stamps are independent — this only re-arms firstboot itself. If
+`.setup-done` is still present from an earlier run, that doesn't block
+firstboot (its own gate is `.firstboot-done` alone), but it does mean the
+*login prompt* stays quiet; remove it too if you want both re-armed.
+
+### 6.5b First-login setup prompt
+
+The Node equivalent of the Hub's `hub-setup.sh` (§B in Appendix B, or just
+"log in and run `hub-setup.sh`" from the Hub's own MOTD): a clone with no
+guestinfo keys set is not silently unconfigured — `node-setup.sh` is invited
+at the very first interactive login (via `/etc/profile.d`) and asks
+`Configure this node now? [Y/n]`.
+
+**Three guard layers**, all present before the wizard is even invoked,
+mirroring the Hub's exactly:
+
+```sh
+case "$-" in
+    *i*)
+        if [ -t 0 ] && [ ! -f /etc/lab-tester/.setup-done ]; then
+            /usr/local/bin/lab-tester/node-setup.sh || true
+        fi
+        ;;
+esac
+```
+
+Interactive shell only (`case "$-" in *i*)` — excludes `ssh host cmd` and
+scp/rsync's non-interactive invocation), a real tty (`[ -t 0 ]` — excludes a
+piped or closed stdin), and the stamp file. `|| true` stops a failing wizard
+from killing the login shell.
+
+**The wizard itself collects nothing** — it only asks permission and
+delegates to `setup.sh`, which already does all the actual value collection
+(guestinfo → environment → prompt, with `SUBNET`'s DHCP-derivation
+fallback). Decline it and you're offered `Skip and don't ask again at
+login? [y/N]`; answer yes and it won't ask again until you run
+`node-setup.sh --force` yourself.
+
+**Stamp file**: `/etc/lab-tester/.setup-done`, distinct from
+`.firstboot-done` (see §6.5a) on purpose — reusing that file would mean
+declining the login prompt silently disarms the zero-touch guestinfo path
+too. `cat` it to see why the prompt has gone quiet:
+
+| Content | Meaning |
+|---|---|
+| `configured` | the wizard ran `setup.sh` successfully |
+| `skipped` | declined, asked not to be asked again |
+| `configured (guestinfo)` | `firstboot.initd` configured it (§6.5a) |
+| `configured (existing config)` | adopted — `setup.sh` was run by hand before the wizard ever saw this node |
+
+**`--force`** re-prompts even when already stamped. If a real config exists,
+it first shows the current `HUB_URL`/`GROUP_NAME`/`SUBNET` and asks
+`Discard this config and collect fresh values? [y/N]` — yes backs it up to
+`config.bak-<timestamp>` (not deleted) and lets `setup.sh` re-collect from
+scratch; no/EOF just re-runs `setup.sh` as a refresh against the existing
+config (services/cron only, values unchanged). Never touches
+`.firstboot-done` — re-arming *that* is the separate recipe in §6.5a.
 
 ### 6.6 Verify on the dashboard
 
@@ -464,7 +547,7 @@ begin populating on the next cron tick, within 60 seconds.
 Checking from the clone itself:
 
 ```sh
-hostname                                    # unique, e.g. test-site-a
+hostname                                    # unique, e.g. test-node-site-a
 cat /etc/lab-tester/config                  # values landed correctly
 rc-service lab-httpd status                 # identity page is being served
 /usr/local/bin/lab-tester/test-cycle.sh     # run one cycle in the foreground
@@ -717,11 +800,13 @@ grep -i error /var/log/messages | tail -20
 ## Appendix A: Manual Node Configuration (reference only)
 
 > **Superseded by `node/build-template.sh`**, exactly as Appendix B is by the
-> hub's script. Copy `node/` to the VM and run it: it installs the package
-> set above, populates `/usr/local/bin/lab-tester/`, installs the services
-> and the logrotate config, generates the shared SSH keypair, and enables
-> `dropbear`, `crond`, `lab-httpd`, `chronyd`, `open-vm-tools` and the
-> first-boot service. `DEPLOYMENT.md` stage 3 is the current procedure.
+> hub's script — or by `install.sh` at the repo root, which asks the role and
+> runs the right one. Copy `node/` to the VM and run it: it installs the
+> package set above, populates `/usr/local/bin/lab-tester/`, installs the
+> services and the logrotate config, generates the shared SSH keypair, and
+> enables `dropbear`, `crond`, `lab-httpd`, `chronyd`, `open-vm-tools`, the
+> first-boot service, and the `node-setup.sh` login prompt (§6.5b).
+> `DEPLOYMENT.md` stage 3 is the current procedure.
 >
 > **Do not follow the steps below as a build.** They assume a package set
 > you installed yourself, and a missing `openssh-client` or `iputils-ping`

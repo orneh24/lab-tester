@@ -14,6 +14,8 @@ Nodes are ~128 MB Alpine clones from one golden image. They get an IP by DHCP, r
 - Adding a new test type to the cycle
 - Changing the boot/registration behaviour or cron cadence
 - Writing golden-image or clone-deployment steps
+- Changing the first-login setup prompt (`node-setup.sh`,
+  `node/services/login-setup.sh`) or its `.setup-done` stamp
 
 ## Hard Constraints
 
@@ -39,6 +41,8 @@ Be conservative about adding a required variable that isn't derivable the way `S
 `test-cycle.sh` — every minute. Pulls `/endpoints`, validates JSON with `jq empty`, skips self by hostname, then per peer runs HTTP → SSH → PMTU → loss (all four always on, no gate — loss is fping-based packet loss/jitter), with traceroute only on `TRACEROUTE_INTERVAL` or right after an HTTP/SSH failure, iperf3 when `ENABLE_IPERF=true`, smb (fetching `probe.bin` via `smbclient`) when `ENABLE_SMB=true` — no contention retry, since `smbd` forks per connection — and smtp (an `EHLO`/`MAIL`/`RCPT`/`RSET`/`QUIT` conversation via hand-rolled `nc`, never `DATA`) when `ENABLE_SMTP=true`. `loss`'s `success` is `true` on any reply at all; the loss percentage lives in `output`, not the success field — never treat nonzero loss as a failure, that's the signal this test exists to report. `smtp`'s `success` gates on the banner+EHLO only, never on RCPT (a real relay correctly rejects the probe's `RCPT TO:<probe@lab.invalid>` with 550) — capability tokens masked as runs of `X` in `output` mean an SMTP ALG / ESMTP inspection engine is rewriting the session, a finding, not a failure. Static targets from `/targets` run whichever tests each one declares — smtp's static-target arm is deliberately ungated, unlike smb's. DNS runs once per cycle against `DNS_SERVER`, not per target — it is a per-source test, which is why the dashboard renders it in its own panel rather than as a matrix column. All results POST in one payload.
 
 Each test function returns one JSON object and is isolated with `|| true` so a failure never aborts the cycle. Build JSON with `printf`, and escape any free text through `json_escape()` (`jq -Rs '.'`) — raw command output contains quotes and newlines that will corrupt the payload otherwise.
+
+`node-setup.sh` is a wizard *wrapper*, not a fourth script with its own config logic — it asks permission (`Configure this node now? [Y/n]`) and, on yes, calls `setup.sh` unmodified. All value collection stays in `setup.sh` because `firstboot.initd` calls only `setup.sh`; any collection logic added to the wizard instead would be invisible on the zero-touch guestinfo path. The wizard's own job is the stamp bookkeeping (`/etc/lab-tester/.setup-done`) and the `--force` discard-confirmation for an existing config — see `docs/BUILD_GUIDE.md` §6.5b for the full stamp/provenance contract.
 
 Timeouts are deliberately short so a full cycle fits inside 60 s — read the actual values off `test-cycle.sh`, which owns them. What matters when you add a test is the budgeting rule: worst case × number of endpoints against the cron interval. A cycle that overruns overlaps with the next one and skews every timing it reports, which is why traceroute is rationed rather than run per cycle.
 
@@ -71,13 +75,15 @@ Servers on each node: dropbear (SSH), busybox httpd (`lab-tester-httpd.conf`), i
 
 `lldpd` also runs on every node, always-on and not gated by any flag. It isn't part of the test harness — no result type, never in the matrix — it's there for `lldpcli show neighbors` when troubleshooting cabling or a wrong port-group assignment.
 
+`node/services/login-setup.sh` is installed to `/etc/profile.d/lab-tester-node-setup.sh` — sourced at interactive login, not a service, not chmod +x. It invites `node-setup.sh` (symlinked onto PATH, same as `set-static-ip`/`hub-setup.sh` on the hub) behind a three-layer guard: interactive shell, real tty, `.setup-done` absent.
+
 ## Cron
 
 `node/services/crontab`: register every 5 min, test cycle every minute, both logging to `/var/log/lab-tester/`. Cron granularity is one minute. Ensure `/var/log/lab-tester/` exists in the image and that logs rotate or truncate; a full disk on a 2 GB image is a silent failure mode.
 
 ## Cloning
 
-Golden image → clone → boot → edit hostname/`GROUP_NAME` (`SUBNET` normally derives itself from DHCP) → restart or run `register.sh`. Hostname uniqueness is mandatory: the hub keys `endpoints` on hostname, so two clones sharing one overwrite each other. Clear machine-id/SSH host keys in the image prep step, not after cloning.
+Golden image → clone → boot. With `guestinfo.lab.hub_url`/`.group` set, `firstboot.initd` configures and registers with no console session. Without them, it stands down and `node-setup.sh` prompts at the first interactive login instead — decline it and edit `/etc/lab-tester/config` by hand, or run `setup.sh`/`node-setup.sh` yourself any time. Either way: edit hostname/`GROUP_NAME` (`SUBNET` normally derives itself from DHCP) → restart or run `register.sh`. Hostname uniqueness is mandatory: the hub keys `endpoints` on hostname, so two clones sharing one overwrite each other. Clear machine-id/SSH host keys, the config, and both stamps (`.firstboot-done`, `.setup-done`) in the image prep step, not after cloning.
 
 ## Anti-Patterns
 
@@ -91,6 +97,12 @@ Golden image → clone → boot → edit hostname/`GROUP_NAME` (`SUBNET` normall
 # BAD: forgetting to set a unique hostname on a clone — it hijacks another node's registration
 
 # BAD: unbounded timeouts — one dead peer stalls the whole cycle past its cron slot
+
+# BAD: collecting a config value inside node-setup.sh instead of setup.sh — firstboot.initd never calls the wizard, so it would be invisible on the zero-touch path
+
+# BAD: an unguarded `read` anywhere the login hook can reach — closed stdin under set -e aborts the whole script; use `read -r VAR || VAR=""`, or `if ! read` when a default would otherwise fire on EOF
+
+# BAD: sealing a golden image with /etc/lab-tester/.setup-done present — every clone's login prompt stays silent forever, with no error to see
 ```
 
 ## Related Skills

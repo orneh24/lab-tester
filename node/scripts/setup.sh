@@ -156,9 +156,9 @@ GROUP_NAME=${_group_name}
 SUBNET=${_subnet}
 
 # Explicit hostname. If empty, the hostname is derived as
-# <HOSTNAME_PREFIX>-<group>, e.g. test-site-a.
+# <HOSTNAME_PREFIX>-<group>, e.g. test-node-site-a.
 LAB_HOSTNAME=${_hostname}
-HOSTNAME_PREFIX=test
+HOSTNAME_PREFIX=test-node
 
 # Test cadence. Traceroute runs on the slower TRACEROUTE_INTERVAL because an
 # unanswered hop costs roughly the probe timeout, making a black-holed path
@@ -207,7 +207,7 @@ fi
 # Prefer an explicit name (guestinfo.lab.hostname, captured into the config
 # above); otherwise derive one from the group this node belongs to.
 # -------------------------------------------------------------------
-HOSTNAME_PREFIX="${HOSTNAME_PREFIX:-test}"
+HOSTNAME_PREFIX="${HOSTNAME_PREFIX:-test-node}"
 LAB_HOSTNAME="${LAB_HOSTNAME:-}"
 
 # A live guestinfo value wins even on re-runs, so re-homing a node in vCenter

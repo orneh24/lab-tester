@@ -71,9 +71,9 @@ Run against a scratch hub, never a live lab node. The dev container usually lack
 
 Dependencies, log directory creation, service enablement, chrony and open-vm-tools belong in `build-template.sh`, not in a post-clone step.
 
-Image prep clears machine-id, dropbear **host** keys, the config, the first-boot stamp and any `.known-good` copies, and resets the hostname to a placeholder. The shared mesh keypair in `/etc/lab-tester/` is deliberately **kept** — the SSH test runs `BatchMode=yes` and could never pass without it.
+Image prep clears machine-id, dropbear **host** keys, the config, both setup stamps (`.firstboot-done` and `.setup-done`), any `config.bak-*` backups, and any `.known-good` copies, and resets the hostname to a placeholder. The shared mesh keypair in `/etc/lab-tester/` is deliberately **kept** — the SSH test runs `BatchMode=yes` and could never pass without it. Missing the `.setup-done` clear is the same failure class as missing the config/hostname clear: a golden image sealed with it present silences `node-setup.sh`'s login prompt on every clone made from it, and the only symptom is a node that never registers.
 
-Clones are normally zero-touch: guestinfo keys are set in vCenter and the `lab-tester-firstboot` service runs `setup.sh` on first boot. That service stands down when the keys are absent, because `setup.sh` prompts and would otherwise block the boot forever.
+Clones are normally zero-touch: guestinfo keys are set in vCenter and the `lab-tester-firstboot` service runs `setup.sh` on first boot. That service stands down when the keys are absent, because `setup.sh` prompts and would otherwise block the boot forever — and the login prompt covers the non-guestinfo case instead: `node-setup.sh`, invited by `/etc/profile.d/lab-tester-node-setup.sh` at first interactive login (same three-layer guard as the hub's `hub-setup.sh`: interactive shell, real tty, stamp file), asks permission and delegates to `setup.sh` for the actual collection.
 
 Hostname must be unique — the hub keys `endpoints` on it, so a duplicate hijacks another node's registration and the mesh collapses to a single entry that every node then skips as "self".
 

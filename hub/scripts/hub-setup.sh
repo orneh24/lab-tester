@@ -29,12 +29,22 @@ CURRENT_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | he
 echo "Current address: ${CURRENT_IP:-none}"
 echo
 
+# `if ! read` vs `read -r VAR || VAR=""`: use the former wherever a default
+# would otherwise fire on EOF (a closed/non-tty stdin reads as an empty
+# string, which `||` can't tell apart from a bare Enter) -- ANSWER below
+# defaults to yes, so EOF must not be read as consent. `||` stays correct
+# everywhere empty-and-EOF should mean the same thing, as with SKIP,
+# IP_CIDR, GATEWAY and CONFIRM below, none of which default to an action.
 printf 'Configure a static IP now? [Y/n] '
-read -r ANSWER
+if ! read -r ANSWER; then
+    echo
+    echo "No input (stdin closed) -- nothing changed."
+    exit 0
+fi
 case "$ANSWER" in
     [nN]*)
         printf "Skip and don't ask again at login? [y/N] "
-        read -r SKIP
+        read -r SKIP || SKIP=""
         case "$SKIP" in
             [yY]*)
                 date -u '+%Y-%m-%dT%H:%M:%SZ skipped' > "$STAMP"
@@ -49,9 +59,9 @@ case "$ANSWER" in
 esac
 
 printf 'Static IP/CIDR (e.g. 10.0.0.100/24): '
-read -r IP_CIDR
+read -r IP_CIDR || IP_CIDR=""
 printf 'Gateway (e.g. 10.0.0.1): '
-read -r GATEWAY
+read -r GATEWAY || GATEWAY=""
 
 if [ -z "$IP_CIDR" ] || [ -z "$GATEWAY" ]; then
     echo "Both values are required -- aborting, nothing changed."
@@ -61,7 +71,7 @@ fi
 echo
 echo "About to set: ${IP_CIDR} via ${GATEWAY}"
 printf 'Apply now? [y/N] '
-read -r CONFIRM
+read -r CONFIRM || CONFIRM=""
 case "$CONFIRM" in
     [yY]*) ;;
     *)

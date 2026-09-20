@@ -1,6 +1,6 @@
 ---
 name: regression-tester
-description: Lab-tester regression gate. Invoke before handing any change to the user, and after any edit under node/, hub/ or the build scripts — it re-runs the fixed battery of checks guarding every numbered constraint in CLAUDE.md, each of which is a bug that already shipped once, plus the wire contract and the two correlation surfaces (R21 /api/time, R22 dashboard syslog links) that have no numbered constraint behind them. Reports pass / fail / not-run per constraint with the command output as evidence, and blocks the handover on any fail.
+description: Lab-tester regression gate. Invoke before handing any change to the user, and after any edit under node/, hub/ or the build scripts — it re-runs the fixed battery of checks guarding every numbered constraint in CLAUDE.md, each of which is a bug that already shipped once, plus the wire contract, the two correlation surfaces (R21 /api/time, R22 dashboard syslog links), and the first-login setup prompt (R23-R25) that have no numbered constraint behind them. Reports pass / fail / not-run per constraint with the command output as evidence, and blocks the handover on any fail.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -550,6 +550,54 @@ that same instant as an offset — `from=` the `$SHIFTED` wall-clock time with
 comes back, every correlation link silently lands two hours from the sample it
 claims to show.
 
+### R23-R25 — the first-login setup prompt
+
+No numbered CLAUDE.md constraint behind these either — same category as
+R21/R22, a design-review catch rather than a shipped bug, added when the
+node's login-prompt mechanism (mirroring the hub's existing `hub-setup.sh`)
+was built.
+
+**R23 — the login hook is triple-guarded, in both roles.** Both
+`services/login-setup.sh` files must contain all three layers verbatim:
+
+```sh
+grep -c 'case "\$-" in' node/services/login-setup.sh hub/services/login-setup.sh
+grep -c '\[ -t 0 \]' node/services/login-setup.sh hub/services/login-setup.sh
+grep -cE '\.setup-done' node/services/login-setup.sh hub/services/login-setup.sh
+```
+
+Pass: `1` for every file on every line. A guard that's present but not
+`*i*)`-anchored, or checks a tty without checking the stamp, silently changes
+who gets prompted.
+
+**R24 — every interactive `read` is EOF-guarded.** A bare `read` under
+`set -eu` aborts the whole script on closed stdin (the exact shape
+`firstboot.initd`'s `< /dev/null` invocation, or any non-tty login, creates)
+instead of degrading cleanly:
+
+```sh
+grep -n 'read -r' node/scripts/setup.sh node/scripts/node-setup.sh hub/scripts/hub-setup.sh
+```
+
+Pass: every match is either `read -r VAR || VAR=""` on the same line, or the
+`read` is the condition of an `if ! read -r VAR; then ... fi` — the second
+form only where a default would otherwise fire on EOF (a defaulted-yes
+prompt reading EOF as `""` is indistinguishable from a bare Enter under
+`|| VAR=""`, which is wrong there specifically). A bare `read -r VAR` with
+neither form is a fail.
+
+**R25 — golden-image cleanup clears the login stamp, both roles.**
+
+```sh
+grep -n '\.setup-done' node/build-template.sh hub/build-template.sh
+```
+
+Pass: both scripts' cleanup section removes their role's `.setup-done` (node
+also clears `config.bak-*`, the `--force` discard's own backup files). A
+golden image sealed with the stamp present silences the login prompt on
+every clone made from it — the only symptom is a node or hub that never
+gets configured, indistinguishable from one nobody has touched yet.
+
 
 ## Tier 2 — dynamic checks
 
@@ -557,11 +605,20 @@ Static greps cannot catch a script that no longer parses or a payload that no
 longer serialises.
 
 ```sh
-for f in node/scripts/*.sh node/build-template.sh hub/build-template.sh \
-         hub/run.sh node/services/*.initd; do
+for f in install.sh node/scripts/*.sh hub/scripts/*.sh \
+         node/build-template.sh hub/build-template.sh hub/run.sh \
+         node/services/*.initd node/services/login-setup.sh \
+         hub/services/*.initd hub/services/login-setup.sh; do
     sh -n "$f" && echo "ok   $f" || echo "FAIL $f"
 done
 ```
+
+This list used to miss `hub/scripts/hub-setup.sh` and `hub/services/firstboot.initd`
+entirely — neither `node/scripts/*.sh` nor `node/services/*.initd` reaches
+anything under `hub/`, and the old loop had no `hub/services/*.initd` or
+`hub/scripts/*.sh` glob at all. Closed alongside adding the new
+`install.sh`/`node-setup.sh`/both roles' `login-setup.sh` (the latter two
+have no `.initd` extension, so the `*.initd` globs don't catch them either).
 
 Bashism scan — the nodes run BusyBox ash, and every one of these parses fine in
 the bash running your check:

@@ -218,7 +218,7 @@ keys set on the VM are read in-guest via `vmware-rpctool "info-get <key>"`:
 | `guestinfo.lab.hub_url` | `http://10.0.0.100` |
 | `guestinfo.lab.group` | `site-a` |
 | `guestinfo.lab.subnet` | `10.1.1.0/24` (optional; derived from the DHCP lease if omitted) |
-| `guestinfo.lab.hostname` | `test-site-a` (optional) |
+| `guestinfo.lab.hostname` | `test-node-site-a` (optional) |
 | `guestinfo.lab.dns_server` | `10.0.0.53` (optional; unset skips the DNS test) |
 | `guestinfo.lab.dns_query` | `example.com` (optional) |
 
@@ -243,9 +243,18 @@ Both optional — with neither present, the firstboot service stands down
 (same reasoning as the nodes: no reliable tty inside an OpenRC `start()`
 to prompt from) and `hub-setup.sh` prompts interactively at first login
 instead (`hub/scripts/hub-setup.sh`, invited by `hub/services/login-setup.sh`).
+Nodes have the same login-prompt fallback: `node-setup.sh`, invited by
+`node/services/login-setup.sh`, asks whether to configure now and delegates
+to `setup.sh` for the actual values — it collects nothing itself, since
+`firstboot.initd` calls only `setup.sh` and any value-collecting logic added
+to the wizard instead would be invisible on the zero-touch path. A fresh
+Alpine base VM starts with `install.sh` (repo root), which asks whether the
+VM becomes a hub or a node and runs the matching `build-template.sh`.
 
 ## Project Structure
 ```
+install.sh             — repo-root entry point: asks hub or node, runs the
+                          matching build-template.sh
 hub/
   build-template.sh   — builds the hub golden template
   serve.py            — production entrypoint (reads HUB_PORT at runtime)
@@ -258,12 +267,13 @@ hub/
   scripts/            — hub-setup.sh
 node/
   build-template.sh   — builds the node golden template
-  scripts/            — register.sh, test-cycle.sh, setup.sh
+  scripts/            — register.sh, test-cycle.sh, setup.sh, node-setup.sh
   services/           — httpd.initd (lab-httpd), iperf3.initd,
                         smbd.initd (lab-smbd), smb.conf,
                         smtpd.initd (lab-smtpd), smtpd.conf, crontab,
                         lab-tester-httpd.conf, logrotate.conf,
-                        firstboot.initd (lab-tester-firstboot)
+                        firstboot.initd (lab-tester-firstboot),
+                        login-setup.sh
   config.sample
 docs/BUILD_GUIDE.md
 ```
@@ -372,7 +382,11 @@ These were live bugs that a review caught; each has a comment at the site.
 16. **The first-boot service stands down without guestinfo.** `setup.sh`
    prompts interactively, so auto-running it with no keys present would block
    the boot forever waiting on input. It checks for `lab.hub_url` and
-   `lab.group` first and redirects to `/dev/null`.
+   `lab.group` first and redirects to `/dev/null`. The interactive
+   counterpart — `hub-setup.sh` / `node-setup.sh`, invited at login — has its
+   own guard: `case "$-" in *i*)` (interactive shell only) plus `[ -t 0 ]`
+   (real tty), so it never fires for `ssh host cmd` or scp/rsync's
+   non-interactive shell either.
 17. **The syslog listener is a second writer, so `busy_timeout` is required.**
    It writes to the same SQLite file as the results API from its own thread.
    WAL permits one writer at a time; without a busy timeout on *both*

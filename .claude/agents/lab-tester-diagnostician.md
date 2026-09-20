@@ -75,6 +75,17 @@ Two newer failure modes worth knowing:
 
 - **Stuck on a rolled-back agent.** `register.sh` self-updates `test-cycle.sh` from the hub and reverts to `.known-good` if the new copy fails its verification run. A node sitting on an old script logs the rollback — `grep -i 'rolling back\|rejecting' /var/log/lab-tester/register.log`. Check whether `hub/agent/test-cycle.sh` is broken before blaming the node.
 - **First boot never ran.** `lab-tester-firstboot` stands down when guestinfo keys are absent, by design. `rc-service lab-tester-firstboot status` and `/var/log/lab-tester/firstboot.log` say whether it ran or declined.
+- **The login prompt was declined, or never seen.** With no guestinfo,
+  `node-setup.sh` prompts at first interactive login instead —
+  `cat /etc/lab-tester/.setup-done` says why it's gone quiet: `skipped`
+  means someone declined and asked not to be asked again (`node-setup.sh
+  --force` re-arms it); `configured` / `configured (guestinfo)` /
+  `configured (existing config)` mean it believes the node is done, so a
+  node still missing from `/endpoints` despite one of those needs Step 2/3,
+  not this section; its plain absence means nobody has ever logged in
+  interactively (only automated/non-tty sessions so far) — the guard is
+  deliberate (`case "$-" in *i*)` plus `[ -t 0 ]`, so scp/ansible/`ssh host
+  cmd` never trip it).
 
 Clock skew is now a *reporting accuracy* problem rather than a data-loss one — a skewed node still shows on the dashboard, its per-test times are just untrustworthy. Check `chronyd` when timings look wrong, not when data is missing.
 

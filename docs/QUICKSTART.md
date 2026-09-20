@@ -15,24 +15,31 @@ reachable.
 apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester
 
 # Hub (build first — its IP gets baked into the node image)
-sh /root/lab-tester/hub/build-template.sh
+sh /root/lab-tester/install.sh hub -y   # or: sh hub/build-template.sh directly
 set-static-ip <hub-ip>/<cidr> <gateway>   # or guestinfo.hub.ip/.gateway pre-boot
 rc-service networking restart
 rc-service lab-tester-hub start
 
 # Node golden image
-sh /root/lab-tester/node/build-template.sh
+sh /root/lab-tester/install.sh node -y   # or: sh node/build-template.sh directly
 vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME required; SUBNET auto-derives from DHCP
 /usr/local/bin/lab-tester/setup.sh
 # verify it registers, THEN undo that (it recreated the config and
 # hostname the build script had just cleared) before sealing the image:
-rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
+      /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
 printf 'lab-tester-template\n' > /etc/hostname
 # now shut down, convert to vCenter template
 
-# Per node clone: set a unique hostname, then
+# Per node clone: set a unique hostname, then either let node-setup.sh
+# prompt at the next login, or run it (or register.sh) by hand
 register.sh
 ```
+
+`install.sh` (repo root, run interactively with no `-y`) asks whether a
+fresh base VM becomes a hub or a node and refuses outright on a VM that's
+already configured — re-running `build-template.sh` there wipes the
+existing config/hostname or the hub's database.
 
 Duplicate hostnames silently collide (`endpoints.hostname` is the primary
 key) — that's the one per-clone step that must not be skipped.
@@ -50,9 +57,13 @@ key) — that's the one per-clone step that must not be skipped.
 | iperf3 (opt-in) | node | 5201 |
 
 Hub files: app at `/opt/lab-tester-hub/`, env at
-`/opt/lab-tester-hub/hub.env`, DB at `/var/lib/lab-tester/hub.db`.
-Node files: scripts at `/usr/local/bin/lab-tester/`, config at
-`/etc/lab-tester/config`.
+`/opt/lab-tester-hub/hub.env`, DB at `/var/lib/lab-tester/hub.db`, login
+stamp at `/etc/lab-tester-hub/.setup-done`.
+Node files: scripts at `/usr/local/bin/lab-tester/` (`node-setup.sh` also
+symlinked onto PATH), config at `/etc/lab-tester/config`, login stamp at
+`/etc/lab-tester/.setup-done` — `cat` it to see why the login prompt has
+gone quiet (`configured` / `skipped` / `configured (guestinfo)` /
+`configured (existing config)`).
 
 ## Hub config (`hub.env`)
 
@@ -139,5 +150,6 @@ up), but start the matching service by hand if it isn't running yet
 | Golden image built before the hub had its final IP | every clone has the wrong `HUB_URL` |
 | Duplicate node hostname | one node silently overwrites another's registration |
 | Verified registration on the golden image, sealed it without re-cleaning | every clone starts with that verification run's real hostname/`GROUP_NAME`/`SUBNET` baked in — same collision as above, from clone one |
+| Golden image sealed with `/etc/lab-tester/.setup-done` present | every clone's login prompt stays silent forever — the node just never configures and never appears, no error anywhere |
 | `ENABLE_SMB`/`ENABLE_SMTP` set but service never started | test never runs, no red cell — just absent |
 | Static target declares a test it can't answer | permanent red for that pair |

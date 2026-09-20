@@ -20,24 +20,31 @@ not a real lab. See [Running the hub locally](#running-the-hub-locally).*
 apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester
 
 # Hub (build first — its IP gets baked into the node image)
-sh /root/lab-tester/hub/build-template.sh
+sh /root/lab-tester/install.sh hub -y   # asks nothing, runs hub/build-template.sh
 set-static-ip <hub-ip>/<cidr> <gateway>   # or guestinfo.hub.ip/.gateway pre-boot
 rc-service networking restart
 rc-service lab-tester-hub start
 
 # Node golden image
-sh /root/lab-tester/node/build-template.sh
+sh /root/lab-tester/install.sh node -y   # asks nothing, runs node/build-template.sh
 vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME required; SUBNET auto-derives from DHCP
 /usr/local/bin/lab-tester/setup.sh
 # verify it registers, THEN undo that (it recreated the config and
 # hostname the build script had just cleared) before sealing the image:
-rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
+      /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
 printf 'lab-tester-template\n' > /etc/hostname
 # now shut down, convert to vCenter template
 
-# Per node clone: set a unique hostname, then
+# Per node clone: set a unique hostname, then either let node-setup.sh
+# prompt at login, or run it (or register.sh) by hand
 register.sh
 ```
+
+`install.sh` (interactive, no `-y`) asks which role a fresh base VM becomes
+and prints or runs the matching `build-template.sh` — it refuses outright on
+a VM that's already configured, since re-running `build-template.sh` there
+wipes the existing config/hostname or the hub's database.
 
 Full command/config reference: [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
 Checklist with verification steps: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
@@ -75,7 +82,9 @@ devices logging to the hub at all.
   memory, disk).
 - **Nodes** — Alpine VMs, ~128 MB RAM, one per network segment under test.
   Cloned from a single golden template; drive the tests via cron every 60s
-  and push results to the hub.
+  and push results to the hub. Configure via `guestinfo.lab.*` (zero-touch)
+  or an interactive prompt at first login (`node-setup.sh`), same pattern as
+  the hub's static-IP setup.
 
 Full design and the constraints that must not regress are in
 [`CLAUDE.md`](CLAUDE.md).

@@ -55,6 +55,25 @@ JSON shape, right field names.
 documented in the guide and `config.sample`, exactly — a typo'd key silently
 falls through to a prompt.
 
+**Setup stamps — four places, per role.** Every stamp path (hub:
+`/etc/lab-tester-hub/.setup-done`; node: `/etc/lab-tester/.firstboot-done`
+and `/etc/lab-tester/.setup-done`) must agree across: the wizard/service that
+writes it, any other writer (`firstboot.initd` writes the node's
+`.setup-done` too, with a distinct provenance word), the login hook that
+reads it to decide whether to prompt, and the matching `build-template.sh`'s
+cleanup that clears it. A stamp cleared in one path but not the guide's
+documented re-clean command (or vice versa) is exactly the class of bug that
+already shipped once for `/etc/lab-tester/config` itself.
+
+**Login hooks.** Every `/etc/profile.d/*` file a `build-template.sh` installs
+must exist as a real file in the matching `services/` directory, and must
+invoke a wizard script that the same `build-template.sh` also installs (and,
+if the wizard is meant to be runnable by name later, symlinks onto PATH).
+Confirm the three-layer guard (`case "$-" in *i*)`, `[ -t 0 ]`, stamp check)
+is present verbatim in both roles' `login-setup.sh` — a guard that's merely
+similar rather than identical is a place a future edit to one will silently
+diverge from the other.
+
 **CLAUDE.md constraints.** It carries a numbered "do not regress" list. Verify
 each still describes the current code; a constraint describing a fix that was
 later reverted is actively misleading.

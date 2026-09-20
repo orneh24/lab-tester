@@ -44,6 +44,94 @@ and intent only.
 
 ## Recent changes
 
+**Guided install and a node first-login setup prompt (2026-09-20).**
+
+Three new mechanisms, mirroring what the Hub already had one-for-one rather
+than inventing a new shape. Client-compatible — no wire-contract change, no
+change to `setup.sh`'s own logic.
+
+1. **`install.sh`** (new, repo root) — asks whether a fresh Alpine base VM
+   becomes a Hub or a Node and runs (or prints, on decline) the matching
+   `build-template.sh`. Refuses outright if the VM already looks built into
+   a role (`/usr/local/bin/lab-tester/setup.sh` or `/opt/lab-tester-hub/`
+   present) — both `build-template.sh` scripts are destructive on an
+   already-configured system (node: wipes config/hostname; hub: wipes the
+   results DB) and their only existing protection, self-deleting after a
+   successful run, disappears the moment the tree is re-cloned. Default
+   confirmation is "no" before actually running a build; `-y`/`--yes` skips
+   it for scripted use.
+2. **`node-setup.sh` + `node/services/login-setup.sh`** — the Node's
+   missing half of a pattern the Hub already had. `login-setup.sh` is
+   installed to `/etc/profile.d/lab-tester-node-setup.sh` (same three-layer
+   guard as the Hub's: interactive shell, real tty, stamp file) and invites
+   `node-setup.sh` at first login. The wizard collects **no configuration
+   values itself** — it only asks `Configure this node now? [Y/n]` and
+   delegates to the existing `setup.sh`, which already does all the actual
+   collection. Keeping collection in one place matters: `firstboot.initd`
+   calls only `setup.sh`, so logic added to the wizard instead would be
+   invisible on the zero-touch guestinfo path.
+3. **New stamp file `/etc/lab-tester/.setup-done`**, deliberately *not* the
+   existing `/etc/lab-tester/.firstboot-done`. That file has exactly one
+   writer (`firstboot.initd`) and one meaning ("the zero-touch service
+   completed"); if the login wizard also wrote it, declining the prompt with
+   "don't ask again" would silently disarm the zero-touch path too — an
+   operator who later sets guestinfo keys and reboots would find the node
+   quietly ignoring them. `firstboot.initd` now writes *both* stamps on
+   success (`.setup-done` gets `configured (guestinfo)`), so a zero-touch
+   node never gets nagged at login either. Four provenance words in
+   `.setup-done`: `configured`, `skipped`, `configured (guestinfo)`,
+   `configured (existing config)` (the last is an adoption gate — a config
+   that exists with no stamp, i.e. `setup.sh` was run by hand before the
+   wizard ever saw this node, is adopted silently rather than nagged).
+   `node-setup.sh --force` on an existing config asks to discard it first
+   (backing it up to `config.bak-<timestamp>`, not deleting) — resetting
+   only the wizard's own stamp would have re-run `setup.sh` but silently
+   kept the old values, since `setup.sh`'s own idempotency gate is separate
+   ("does `/etc/lab-tester/config` exist").
+4. **`node/build-template.sh`'s cleanup** now also clears
+   `/etc/lab-tester/config.bak-*` and `.setup-done`, alongside the existing
+   `config`/`.firstboot-done` clear — the same class of bug fixed earlier
+   this session for a different file: a golden image sealed with
+   `.setup-done` present would silently silence the login prompt on every
+   clone made from it, and the only symptom is a node that never registers.
+5. **Consistency hardening on `hub/scripts/hub-setup.sh`**: its `read`
+   calls had no `|| VAR=""` EOF guard, relying solely on `login-setup.sh`'s
+   `[ -t 0 ]` check to never be invoked with closed stdin. Retrofitted the
+   same guard convention used elsewhere this session, including the
+   `if ! read` form (not `|| VAR=""`) on the one defaulted-yes prompt, where
+   the two forms are not interchangeable: `|| VAR=""` can't tell a bare
+   Enter from EOF, so on a defaulted-yes prompt EOF would read as consent.
+   No behavior change on a real VM (the tty guard already prevented these
+   paths from being hit); only changes what happens if `hub-setup.sh --force`
+   is ever invoked directly from a non-interactive context.
+
+Verified with a scripted walkthrough (patched copies with only
+`/etc/lab-tester(-hub)` paths redirected, diffed against originals to
+confirm nothing else changed, stubs for `ip`/`rc-service`/`set-static-ip`/
+`vmware-rpctool` on PATH) covering: the EOF-on-main-prompt case (proves
+`if ! read` over `|| VAR=""` — under the latter, EOF would have driven
+straight into `setup.sh` with closed stdin), decline+skip, decline+ask-again,
+accept+success, accept+failure, already-stamped, adoption, `--force`
+declining and accepting the discard, `firstboot.initd`'s double-stamp write
+on success and neither stamp on failure, the cleanup line's glob, and the
+three login-hook guard layers staying silent for both a non-interactive
+shell and an interactive-but-no-tty one. Also replayed the same wizard cases
+against the now-hardened `hub-setup.sh` to confirm no regression. One real
+bug caught by testing: `install.sh`'s already-built check first used `[ -x
+... ]` on the node marker, which is fragile if the execute bit is ever lost
+(it doesn't need to be executable to prove the node is configured) — changed
+to `[ -f ... ]`.
+
+**Also verified against a genuine pty** (Docker, `util-linux`'s `script`
+wrapping a real interactive `sh -i`, not the CLI's own non-interactive
+Bash tool): the real `login-setup.sh`, sourced from `/etc/profile.d` under
+that pty with no stamp present, does invoke the real `node-setup.sh` and
+print its actual prompts; declining with "skip, don't ask again" writes the
+stamp; a second real login under the same pty afterward stays completely
+silent. This closes a gap the Hub's identical, already-shipped mechanism had
+never had verified either (`DEPLOYMENT.md`'s "nothing here has run on real
+hardware yet" banner predates this session).
+
 **Node first-boot resiliency: DHCP failsafe, subnet auto-derivation, and a
 latent `set -e` abort fixed (2026-09-20).**
 

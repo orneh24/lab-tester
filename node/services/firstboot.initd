@@ -8,7 +8,14 @@
 # It only auto-runs when guestinfo actually carries the required keys. With
 # no keys present, setup.sh would block on its interactive prompts with
 # nobody attached, so the service stands down and leaves the MOTD
-# instructions for a human instead.
+# instructions for a human instead (or the node-setup.sh login prompt --
+# see services/login-setup.sh).
+#
+# Two stamps, two owners, on purpose. STAMP is this service's own re-entry
+# guard and nothing else reads it. SETUP_STAMP is shared with node-setup.sh
+# and login-setup.sh so a zero-touch node doesn't get nagged for config it
+# already has -- writing "configured (guestinfo)" here rather than reusing
+# node-setup.sh's own words keeps the provenance visible in one `cat`.
 
 name="lab-tester-firstboot"
 description="Configure lab-tester on first boot from VMware guestinfo"
@@ -21,6 +28,7 @@ depend() {
 command_background="no"
 
 STAMP="/etc/lab-tester/.firstboot-done"
+SETUP_STAMP="/etc/lab-tester/.setup-done"
 SETUP="/usr/local/bin/lab-tester/setup.sh"
 
 _guestinfo() {
@@ -61,6 +69,7 @@ start() {
     if "$SETUP" < /dev/null >> /var/log/lab-tester/firstboot.log 2>&1; then
         mkdir -p /etc/lab-tester
         date -u '+%Y-%m-%dT%H:%M:%SZ' > "$STAMP"
+        date -u '+%Y-%m-%dT%H:%M:%SZ configured (guestinfo)' > "$SETUP_STAMP"
         eend 0
     else
         eend 1 "setup failed — see /var/log/lab-tester/firstboot.log"

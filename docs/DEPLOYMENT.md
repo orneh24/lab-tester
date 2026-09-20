@@ -32,7 +32,7 @@ setup-alpine
 
 # 2. Hub — do this first; its IP gets baked into the node image
 #    (on the hub clone)
-sh /root/lab-tester/hub/build-template.sh
+sh /root/lab-tester/install.sh hub -y   # asks nothing; or: sh hub/build-template.sh
 set-static-ip <hub-ip>/<cidr> <gateway>
 rc-service networking restart
 rc-service lab-tester-hub start
@@ -40,13 +40,14 @@ rc-service lab-tester-hub start
 
 # 3. Node golden image
 #    (on the other clone)
-sh /root/lab-tester/node/build-template.sh
+sh /root/lab-tester/install.sh node -y   # asks nothing; or: sh node/build-template.sh
 vi /etc/lab-tester/config        # set HUB_URL, GROUP_NAME (SUBNET auto-derives from DHCP)
 /usr/local/bin/lab-tester/setup.sh
 # confirm it registers against the live hub, THEN undo what that just
 # did before sealing it (see stage 3 below) — verifying re-creates the
 # config and hostname the build script had just cleared:
-rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
+      /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
 printf 'lab-tester-template\n' > /etc/hostname
 # now shut down and convert to a vCenter template
 
@@ -88,6 +89,12 @@ Everything downstream bakes these in. Settle them before touching a VM.
 - [ ] Snapshot or clone twice — this base becomes both the hub and the node
       image
 
+`install.sh` (repo root) is run *per clone* in stages 2 and 3 below, not on
+this shared base — it asks which role that specific clone becomes and runs
+the matching `build-template.sh`. It also refuses outright if the clone
+already looks built, since re-running `build-template.sh` on a configured
+system wipes it.
+
 > **No git access from the VM?** SCP the `hub/`/`node/` directories over
 > instead (BUILD_GUIDE Appendix A.2 / B.2) — but not yet. A bare
 > `setup-alpine` install with only dropbear has **no `scp` or `sftp` binary
@@ -112,9 +119,10 @@ the script and contradicts it (its init script runs `run.sh`; the real one
 runs `python3 serve.py`). It's kept only as reference for what the script
 does, not as build steps to follow.
 
-- [ ] Run `sh /root/lab-tester/hub/build-template.sh` (already on the VM if
-      you cloned in stage 1; otherwise SCP `hub/` over first — see stage 1's
-      note)
+- [ ] Run `sh /root/lab-tester/install.sh hub` (asks to confirm, then runs
+      `hub/build-template.sh`) or that script directly — already on the VM
+      if you cloned in stage 1; otherwise SCP `hub/` over first — see stage
+      1's note
 - [ ] Set the static IP, either way:
       - **Guestinfo (zero-touch):** set `guestinfo.hub.ip` and
         `guestinfo.hub.gateway` on the VM before boot; `lab-tester-hub-firstboot`
@@ -175,9 +183,15 @@ Verify before moving on:
 
 ## 3. Node golden image
 
-- [ ] Run `sh /root/lab-tester/node/build-template.sh` (already on the VM if
-      you cloned in stage 1; otherwise SCP `node/` over first — see stage 1's
-      note)
+- [ ] Run `sh /root/lab-tester/install.sh node` (asks to confirm, then runs
+      `node/build-template.sh`) or that script directly — already on the VM
+      if you cloned in stage 1; otherwise SCP `node/` over first — see stage
+      1's note
+- [ ] Log in — `node-setup.sh` runs automatically at this first interactive
+      login (via `/etc/profile.d`) and asks `Configure this node now?
+      [Y/n]`. Answer yes and it delegates straight to `setup.sh` below;
+      answer no and either let it ask again next login, or use the manual
+      path in the next checkbox
 - [ ] `/etc/lab-tester/config`: set `HUB_URL` and `GROUP_NAME`. `SUBNET` can
       be left blank — `setup.sh` derives it from the interface's DHCP lease,
       falling back to a prompt only if that also fails. `register.sh` still
@@ -195,13 +209,16 @@ Verify before moving on:
       returning nothing but comments before trusting it with a real network path
 - [ ] Confirm registration works against the live hub before sealing the image
 - [ ] **Redo the config/hostname cleanup** — `node/build-template.sh` already
-      cleared `/etc/lab-tester/config` and reset the hostname to
-      `lab-tester-template` as its last step, but the config-and-`setup.sh`
-      verification above just undid both. Repeat that part by hand:
-      `rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done` and
-      `printf 'lab-tester-template\n' > /etc/hostname`. Skip this and every
-      clone starts with this run's real `GROUP_NAME`/`SUBNET` and hostname
-      baked in — the hostname collision stage 4 warns about, from clone one.
+      cleared `/etc/lab-tester/config`, the login-prompt stamp, and reset the
+      hostname to `lab-tester-template` as its last step, but the
+      login-prompt-and-`setup.sh` verification above just undid all of it.
+      Repeat that part by hand:
+      `rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done`
+      and `printf 'lab-tester-template\n' > /etc/hostname`. Skip this and
+      every clone starts with this run's real `GROUP_NAME`/`SUBNET` and
+      hostname baked in — the hostname collision stage 4 warns about, from
+      clone one — **and** with `.setup-done` present, so `node-setup.sh`
+      never even offers the login prompt on any clone made from this image.
       The rest of the script's cleanup (machine-id, dropbear host keys,
       logs, zero free space) doesn't need repeating — nothing after it
       touched those
@@ -222,7 +239,8 @@ Repeat per subnet:
       failure left: two clones sharing a hostname means one overwrites the
       other's registration and the second never appears in the matrix
 - [ ] Optionally set `GROUP_NAME` for the dashboard badge
-- [ ] Reboot, or run `register.sh`
+- [ ] With no guestinfo keys set, `node-setup.sh` prompts at first login —
+      answer it there, or reboot/run `register.sh` after configuring by hand
 - [ ] Confirm it appears in `GET /endpoints` with a recent `last_seen`
 
 ---

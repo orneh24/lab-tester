@@ -246,10 +246,14 @@ chmod 0555 /srv/lab-tester-smb
 # 4. Install scripts
 # -------------------------------------------------------------------
 log "Installing scripts"
-cp -f "${SCRIPT_DIR}/scripts/register.sh"   "$INSTALL_DIR/register.sh"
-cp -f "${SCRIPT_DIR}/scripts/test-cycle.sh" "$INSTALL_DIR/test-cycle.sh"
-cp -f "${SCRIPT_DIR}/scripts/setup.sh"      "$INSTALL_DIR/setup.sh"
+cp -f "${SCRIPT_DIR}/scripts/register.sh"    "$INSTALL_DIR/register.sh"
+cp -f "${SCRIPT_DIR}/scripts/test-cycle.sh"  "$INSTALL_DIR/test-cycle.sh"
+cp -f "${SCRIPT_DIR}/scripts/setup.sh"       "$INSTALL_DIR/setup.sh"
+cp -f "${SCRIPT_DIR}/scripts/node-setup.sh"  "$INSTALL_DIR/node-setup.sh"
 chmod +x "$INSTALL_DIR"/*.sh
+
+# On PATH by name, same as the hub's hub-setup.sh / set-static-ip.
+ln -sf "$INSTALL_DIR/node-setup.sh" /usr/local/bin/node-setup.sh
 
 # -------------------------------------------------------------------
 # 5. Install sample config
@@ -279,6 +283,10 @@ chmod +x /etc/init.d/lab-httpd
 # prompt nobody is there to answer.
 cp -f "${SCRIPT_DIR}/services/firstboot.initd" /etc/init.d/lab-tester-firstboot
 chmod +x /etc/init.d/lab-tester-firstboot
+
+# Invite an unconfigured node to run node-setup.sh at first interactive
+# login, where a real tty is guaranteed (unlike an OpenRC start()).
+cp -f "${SCRIPT_DIR}/services/login-setup.sh" /etc/profile.d/lab-tester-node-setup.sh
 
 # Samba (SMB probe server). Config is installed unconditionally like the
 # other service files, but — unlike dropbear/lab-httpd below — lab-smbd is
@@ -361,7 +369,7 @@ cat > "${WEB_ROOT}/index.html" <<'IDEOF'
 </head>
 <body>
   <h1>lab-tester — not configured</h1>
-  <p>Run <code>/usr/local/bin/lab-tester/setup.sh</code> to configure this VM.</p>
+  <p>Log in and run <code>node-setup.sh</code> (or <code>setup.sh</code> directly) to configure this VM.</p>
 </body>
 </html>
 IDEOF
@@ -392,14 +400,19 @@ log "Services enabled"
 log "Creating first-boot setup reminder"
 cat > /etc/motd <<'MOTDEOF'
 
-  ┌──────────────────────────────────────────────┐
-  │           lab-tester node                     │
-  │                                               │
-  │  First-boot setup:                            │
-  │    1. Edit /etc/lab-tester/config             │
-  │       (copy from config.sample)               │
-  │    2. Run: /usr/local/bin/lab-tester/setup.sh │
-  └──────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────┐
+  │          lab-tester node                       │
+  │                                                │
+  │   Not configured yet? Log in and run:          │
+  │     node-setup.sh                              │
+  │   (runs automatically at first login if this   │
+  │    node hasn't been configured)                │
+  │                                                │
+  │   Manual path:                                 │
+  │     1. Edit /etc/lab-tester/config             │
+  │        (copy from config.sample)               │
+  │     2. Run: /usr/local/bin/lab-tester/setup.sh │
+  └────────────────────────────────────────────────┘
 
 MOTDEOF
 
@@ -427,9 +440,15 @@ rm -rf /var/lib/samba/*
 find /var/spool/smtpd/queue -mindepth 1 -delete 2>/dev/null || true
 
 # Remove any config left from build-time testing so clones start clean and
-# setup.sh actually runs its configuration path. The first-boot stamp must
-# go too, or clones would consider themselves already configured.
-rm -f /etc/lab-tester/config /etc/lab-tester/.firstboot-done
+# setup.sh actually runs its configuration path. Both stamps must go too,
+# or clones would consider themselves already configured -- a golden image
+# sealed with .setup-done present (e.g. from a build-verification pass that
+# answered "skip, don't ask again") would silence node-setup.sh's login
+# prompt on every clone made from it, and the only symptom is a node that
+# never registers. config.bak-* are node-setup.sh --force's own backups of
+# a real (not template) config and must not survive into the image either.
+rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
+      /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
 rm -f /usr/local/bin/lab-tester/*.known-good
 
 # Reset the hostname to an obviously-unconfigured value. setup.sh replaces
@@ -472,11 +491,13 @@ log "To deploy a clone (zero-touch, recommended):"
 log "  Set these guestinfo keys on the clone in vCenter, then boot:"
 log "    guestinfo.lab.hub_url   http://10.0.0.100"
 log "    guestinfo.lab.group     site-a"
-log "    guestinfo.lab.subnet    10.1.1.0/24"
-log "    guestinfo.lab.hostname  test-site-a (optional)"
-log "  Then run: /usr/local/bin/lab-tester/setup.sh"
+log "    guestinfo.lab.subnet    10.1.1.0/24 (optional -- derives from DHCP)"
+log "    guestinfo.lab.hostname  test-node-site-a (optional)"
+log "  Then boot -- lab-tester-firstboot configures and registers the clone"
+log "  automatically. Nothing to run by hand."
 log ""
 log "To deploy a clone (manual):"
 log "  1. Clone from template, assign to correct network"
 log "  2. Boot and log in (root / ${LAB_ROOT_PASSWORD})"
-log "  3. Run: /usr/local/bin/lab-tester/setup.sh  (it will prompt)"
+log "  3. node-setup.sh runs automatically at first login and prompts;"
+log "     or run it (or /usr/local/bin/lab-tester/setup.sh) by hand any time"
