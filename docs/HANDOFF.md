@@ -1,6 +1,6 @@
 # Lab-Tester — Session Handoff
 
-Last updated: 2026-09-14. Written so a fresh session on any surface (Claude Code
+Last updated: 2026-09-20. Written so a fresh session on any surface (Claude Code
 in the terminal, the desktop app, claude.ai) can pick up without the prior chat.
 Architecture lives in `CLAUDE.md`, build order and the deployment checklist in
 `docs/DEPLOYMENT.md`, step detail in `docs/BUILD_GUIDE.md`. This file is state
@@ -43,6 +43,48 @@ and intent only.
 > sound.
 
 ## Recent changes
+
+**Node first-boot resiliency: DHCP failsafe, subnet auto-derivation, and a
+latent `set -e` abort fixed (2026-09-20).**
+
+Four related fixes to `node/scripts/setup.sh`, all client-compatible (no
+wire-contract change):
+
+1. **Manual static-IP failsafe.** If DHCP hasn't assigned an address by the
+   time `setup.sh` runs, it now prompts for a one-time static IP/CIDR and
+   gateway and writes `/etc/network/interfaces` itself (same shape as the
+   hub's `set-static-ip`). Before this, a node with no DHCP lease just
+   silently never registered, with no error visible anywhere but its own log.
+2. **`SUBNET` no longer needs a human to supply it.** The DHCP lease already
+   carries address + prefix, so `setup.sh` now derives the network address
+   from the current lease (`derive_subnet()`, pure integer arithmetic —
+   floor-divide by `2^hostbits` then multiply back, since busybox awk has no
+   bitwise operators) and only falls through to guestinfo/env/prompt if that
+   fails. This closes the gap `HANDOFF.md` flagged 2026-09-10 as "designed,
+   never built" (reducing the three required vars, no `subnet_from_cidr()`
+   anywhere) — `guestinfo.lab.subnet` and `SUBNET` are now optional, not
+   required. `register.sh` and the wire contract are unchanged: the config
+   file still needs a non-empty value by cron time, only now it's usually
+   filled in automatically rather than typed in.
+3. **Fixed a latent `set -e` abort.** `firstboot.initd` only checks
+   `guestinfo.lab.hub_url`/`.group` before invoking `setup.sh`, never
+   `.subnet` — so a clone missing just the subnet key hit the subnet prompt
+   with stdin redirected from `/dev/null` (deliberate, so firstboot can't
+   hang the boot on a prompt nobody will answer). The unguarded `read` there
+   returned EOF's nonzero exit status, and under `set -eu` that aborted the
+   *entire* script before cron or any service got installed — worse than the
+   already-tolerated "hub not up yet" registration failure. All three config
+   prompts (`HUB_URL`/`GROUP_NAME`/`SUBNET`) and the new IP prompt now use
+   `read -r var || var=""`. In practice, fix 2 mostly closes the door fix 3
+   guards, since subnet is rarely absent from *and* underivable at the same
+   clone.
+4. **Hub's `resolv.conf` cleanup gap.** `hub/build-template.sh`'s
+   template-conversion cleanup never touched `/etc/resolv.conf`, so a clone
+   could silently inherit whatever DNS server the *build* network's DHCP
+   handed out — nothing refreshes it again once the hub goes static.
+   Cleanup now blanks it, and `set-static-ip`'s output says DNS is
+   unconfigured so an operator who needs it (e.g. a chrony NTP pool
+   hostname) knows to set `/etc/resolv.conf` by hand.
 
 **Re-scope: Hub + Node only, routers moved to a separate project (2026-09-14).**
 

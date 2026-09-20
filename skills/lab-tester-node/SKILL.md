@@ -26,11 +26,11 @@ Nodes are ~128 MB Alpine clones from one golden image. They get an IP by DHCP, r
 
 ## Config
 
-`/etc/lab-tester/config` (from `node/config.sample`), sourced by both scripts: `HUB_URL` (no trailing slash), `GROUP_NAME` and `SUBNET` — all three required — plus optional `ENABLE_IPERF`, `ENABLE_SMB`, `ENABLE_SMTP`, `TRACEROUTE_INTERVAL`, `TRACEROUTE_MAX_HOPS`, `PMTU_SIZE`, `DNS_SERVER`, `DNS_QUERY`, `AGENT_AUTOUPDATE`.
+`/etc/lab-tester/config` (from `node/config.sample`), sourced by both scripts: `HUB_URL` (no trailing slash), `GROUP_NAME` and `SUBNET` — plus optional `ENABLE_IPERF`, `ENABLE_SMB`, `ENABLE_SMTP`, `TRACEROUTE_INTERVAL`, `TRACEROUTE_MAX_HOPS`, `PMTU_SIZE`, `DNS_SERVER`, `DNS_QUERY`, `AGENT_AUTOUPDATE`.
 
-**`register.sh` requires all three of `HUB_URL`, `GROUP_NAME` and `SUBNET`**, and `exit 1`s on the first one that is empty. Nothing is derived and nothing is defaulted. Per-clone values are therefore: hostname, `GROUP_NAME`, `SUBNET` — normally supplied through guestinfo rather than edited by hand.
+**`register.sh` still requires all three of `HUB_URL`, `GROUP_NAME` and `SUBNET`** to be non-empty in the config file at cron time, and `exit 1`s on the first one that is empty. `SUBNET` is the one exception at the *operator-input* layer, though: `setup.sh`'s `derive_subnet()` computes it from the interface's current DHCP lease (address + prefix already give you the network — see the no-bitwise-awk note above) and only falls through to guestinfo/env/prompt if that fails. `HUB_URL` and `GROUP_NAME` are still not derived or defaulted from anything. Per-clone values are therefore: hostname, `GROUP_NAME` — `SUBNET` normally needs nothing at all now.
 
-Be conservative about adding a fourth. Each required variable is another way for a clone to fail silently: an unregistered node is invisible in the matrix rather than visibly broken, so the failure looks like a node that was never built. Deriving or defaulting a value beats validating it — that argument is why reducing this set to `HUB_URL` alone was once planned. It was never implemented, so do not write code that assumes it.
+Be conservative about adding a required variable that isn't derivable the way `SUBNET` now is. Each one is another way for a clone to fail silently: an unregistered node is invisible in the matrix rather than visibly broken, so the failure looks like a node that was never built. Deriving or defaulting a value beats validating it.
 
 ## Script Structure
 
@@ -77,7 +77,7 @@ Servers on each node: dropbear (SSH), busybox httpd (`lab-tester-httpd.conf`), i
 
 ## Cloning
 
-Golden image → clone → boot → edit hostname/`GROUP_NAME`/`SUBNET` → restart or run `register.sh`. Hostname uniqueness is mandatory: the hub keys `endpoints` on hostname, so two clones sharing one overwrite each other. Clear machine-id/SSH host keys in the image prep step, not after cloning.
+Golden image → clone → boot → edit hostname/`GROUP_NAME` (`SUBNET` normally derives itself from DHCP) → restart or run `register.sh`. Hostname uniqueness is mandatory: the hub keys `endpoints` on hostname, so two clones sharing one overwrite each other. Clear machine-id/SSH host keys in the image prep step, not after cloning.
 
 ## Anti-Patterns
 

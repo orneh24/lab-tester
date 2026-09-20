@@ -27,7 +27,7 @@ rc-service lab-tester-hub start
 
 # Node golden image
 sh /root/lab-tester/node/build-template.sh
-vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME, SUBNET — all three required
+vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME required; SUBNET auto-derives from DHCP
 /usr/local/bin/lab-tester/setup.sh
 # verify it registers, THEN undo that (it recreated the config and
 # hostname the build script had just cleared) before sealing the image:

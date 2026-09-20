@@ -41,7 +41,7 @@ rc-service lab-tester-hub start
 # 3. Node golden image
 #    (on the other clone)
 sh /root/lab-tester/node/build-template.sh
-vi /etc/lab-tester/config        # set HUB_URL, GROUP_NAME, SUBNET
+vi /etc/lab-tester/config        # set HUB_URL, GROUP_NAME (SUBNET auto-derives from DHCP)
 /usr/local/bin/lab-tester/setup.sh
 # confirm it registers against the live hub, THEN undo what that just
 # did before sealing it (see stage 3 below) — verifying re-creates the
@@ -178,11 +178,13 @@ Verify before moving on:
 - [ ] Run `sh /root/lab-tester/node/build-template.sh` (already on the VM if
       you cloned in stage 1; otherwise SCP `node/` over first — see stage 1's
       note)
-- [ ] `/etc/lab-tester/config`: set **all three** of `HUB_URL`, `GROUP_NAME`
-      and `SUBNET`. `register.sh` validates every one of them and `exit 1`s on
-      the first that is empty — nothing is derived or defaulted. A clone missing
-      any of the three never appears in the matrix, and the only symptom is its
-      absence
+- [ ] `/etc/lab-tester/config`: set `HUB_URL` and `GROUP_NAME`. `SUBNET` can
+      be left blank — `setup.sh` derives it from the interface's DHCP lease,
+      falling back to a prompt only if that also fails. `register.sh` still
+      validates all three are non-empty in the config file at cron time and
+      `exit 1`s on the first that isn't — a clone that ends up missing any of
+      them (e.g. no DHCP lease when `setup.sh` ran) never appears in the
+      matrix, and the only symptom is its absence
 - [ ] Run `setup.sh`. It does **not** configure chrony — nodes sync to
       Alpine's default NTP pool, and nothing points them at the hub
 - [ ] Verify dropbear, httpd, iperf3, crond, lldpd and open-vm-tools are

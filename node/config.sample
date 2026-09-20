@@ -3,11 +3,14 @@
 #
 # In normal use you do not edit this by hand: setup.sh writes the file from
 # VMware guestinfo keys set on the node's VM in vCenter. Precedence for each
-# value is guestinfo -> environment variable -> interactive prompt.
+# value is guestinfo -> environment variable -> interactive prompt, except
+# SUBNET, which gets one extra fallback before the prompt: setup.sh derives
+# it from the interface's own DHCP lease (address + prefix already give you
+# the network), so it's normally left unset entirely.
 #
 #   guestinfo.lab.hub_url    ->  HUB_URL
 #   guestinfo.lab.group      ->  GROUP_NAME
-#   guestinfo.lab.subnet     ->  SUBNET
+#   guestinfo.lab.subnet     ->  SUBNET         (optional — see above)
 #   guestinfo.lab.hostname   ->  LAB_HOSTNAME   (optional)
 #   guestinfo.lab.dns_server ->  DNS_SERVER     (optional)
 #   guestinfo.lab.dns_query  ->  DNS_QUERY      (optional)
@@ -20,9 +23,12 @@ HUB_URL=http://10.0.0.100
 # dashboard and to filter syslog by sender. Example: site-a, site-b, rack1.
 GROUP_NAME=site-a
 
-# Subnet of this node's interface (CIDR notation)
+# Subnet of this node's interface (CIDR notation). Leave empty -- setup.sh
+# derives it from the current DHCP lease's own address + prefix. Set it
+# explicitly only to override that (e.g. the lease's actual prefix doesn't
+# match what you want recorded).
 # Example: 10.1.1.0/24
-SUBNET=10.1.1.0/24
+SUBNET=
 
 # ---------------------------------------------------------------------
 # Identity

@@ -217,12 +217,14 @@ keys set on the VM are read in-guest via `vmware-rpctool "info-get <key>"`:
 |-----|---------|
 | `guestinfo.lab.hub_url` | `http://10.0.0.100` |
 | `guestinfo.lab.group` | `site-a` |
-| `guestinfo.lab.subnet` | `10.1.1.0/24` |
+| `guestinfo.lab.subnet` | `10.1.1.0/24` (optional; derived from the DHCP lease if omitted) |
 | `guestinfo.lab.hostname` | `test-site-a` (optional) |
 | `guestinfo.lab.dns_server` | `10.0.0.53` (optional; unset skips the DNS test) |
 | `guestinfo.lab.dns_query` | `example.com` (optional) |
 
-Precedence in `setup.sh`: **guestinfo → environment → prompt**.
+Precedence in `setup.sh`: **guestinfo → environment → prompt**, except
+`subnet`, which has one extra fallback before the prompt: derived from the
+interface's own DHCP lease (address + prefix already give you the network).
 If hostname is omitted it is derived as `<HOSTNAME_PREFIX>-<group-slug>`.
 `group` is an arbitrary operator-chosen label — it clusters nodes on the
 dashboard and filters syslog by sender; it carries no network-topology

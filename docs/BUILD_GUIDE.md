@@ -317,8 +317,10 @@ settings while powered off.
 
 ### 6.4 Supply the per-node configuration
 
-Each clone needs four values: the hub URL, the group it belongs to, its
-subnet, and its hostname. There are two ways to deliver them.
+Each clone needs two required values — the hub URL and the group it belongs
+to — plus a unique hostname (explicit, or derived from the group). Subnet is
+optional: `setup.sh` derives it from the interface's own DHCP lease if you
+leave it out. There are two ways to deliver whatever you do set.
 
 **Every clone must end up with a unique hostname.** The hub keys its endpoint
 table by hostname, so two nodes sharing one name will overwrite each other and
@@ -342,9 +344,11 @@ flexible anyway since they can carry the whole configuration.
 
    The keys, and the config variable each one sets, are listed in the header of
    `node/config.sample` — that file ships beside the code that reads them, so
-   work from it rather than from a copy here. `hub_url`, `group` and `subnet`
-   are required; the rest are optional. The PowerCLI and govc examples below
-   show the three required keys in context.
+   work from it rather than from a copy here. `hub_url` and `group` are
+   required; `subnet` and the rest are optional (`subnet` derives from the
+   DHCP lease if omitted). The PowerCLI and govc examples below still set
+   `subnet` explicitly since a real lab may want it pinned rather than
+   derived, but it's not required.
 
 5. OK → OK, then power on.
 

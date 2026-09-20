@@ -22,7 +22,7 @@ rc-service lab-tester-hub start
 
 # Node golden image
 sh /root/lab-tester/node/build-template.sh
-vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME, SUBNET — all three required
+vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME required; SUBNET auto-derives from DHCP
 /usr/local/bin/lab-tester/setup.sh
 # verify it registers, THEN undo that (it recreated the config and
 # hostname the build script had just cleared) before sealing the image:
@@ -76,15 +76,17 @@ Node files: scripts at `/usr/local/bin/lab-tester/`, config at
 |---|---|---|
 | `HUB_URL` | yes | no trailing slash |
 | `GROUP_NAME` | yes | operator label, clusters the dashboard and filters syslog — no topology meaning |
-| `SUBNET` | yes | CIDR |
+| `SUBNET` | no | CIDR; `setup.sh` derives it from the DHCP lease if left blank, prompts only if that also fails |
 | `LAB_HOSTNAME` | no | must be unique across the lab; derived from `GROUP_NAME` if empty |
 | `DNS_SERVER` | no | unset skips the DNS test entirely |
 | `ENABLE_IPERF` / `ENABLE_SMB` / `ENABLE_SMTP` | no | default false; each starts its own OpenRC service |
 | `AGENT_AUTOUPDATE` | no | default true; self-updates `test-cycle.sh` on each 5-min registration |
 
-`register.sh` `exit 1`s on the first of `HUB_URL`/`GROUP_NAME`/`SUBNET` that's
-empty — nothing is derived. A node missing one just never appears; there's
-no error to see.
+`register.sh` still `exit 1`s on the first of `HUB_URL`/`GROUP_NAME`/`SUBNET`
+that's empty *in the config file* at cron time — `setup.sh`'s derivation just
+means an operator no longer has to supply `SUBNET` by hand. A node still
+missing one (e.g. no DHCP lease when `setup.sh` ran) just never appears;
+there's no error to see.
 
 ## Verify
 

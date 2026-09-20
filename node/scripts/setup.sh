@@ -59,6 +59,35 @@ read_guestinfo() {
 }
 
 # -------------------------------------------------------------------
+# Derive the network address from the interface's current DHCP lease.
+#
+# The lease already carries the prefix (`ip -4 -o addr show` prints CIDR
+# form, e.g. 10.1.1.23/24), so SUBNET doesn't need a human to type it --
+# only the host bits need zeroing to turn a lease into a network address.
+# Pure integer arithmetic (floor-divide by 2^hostbits, multiply back)
+# instead of a bitwise AND, since busybox awk has no bitwise operators.
+# Prints nothing (not an error) if there's no address yet, e.g. DHCP
+# hasn't completed at this point in boot -- callers fall through to the
+# guestinfo/env/prompt chain in that case, same as any other missing value.
+# -------------------------------------------------------------------
+derive_subnet() {
+    _cidr=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1 {print $4}')
+    [ -z "$_cidr" ] && return 0
+
+    awk -v cidr="$_cidr" 'BEGIN {
+        if (split(cidr, parts, "/") != 2) { exit 1 }
+        prefix = parts[2] + 0
+        if (prefix < 0 || prefix > 32) { exit 1 }
+        if (split(parts[1], o, ".") != 4) { exit 1 }
+        ipnum = o[1]*16777216 + o[2]*65536 + o[3]*256 + o[4]
+        divisor = 2 ^ (32 - prefix)
+        netnum = int(ipnum / divisor) * divisor
+        printf "%d.%d.%d.%d/%d", int(netnum/16777216)%256, int(netnum/65536)%256, \
+            int(netnum/256)%256, netnum%256, prefix
+    }' 2>/dev/null || true
+}
+
+# -------------------------------------------------------------------
 # Create configuration file
 #
 # Precedence for each value: guestinfo -> environment -> prompt.
@@ -77,6 +106,10 @@ else
     _hub_url="${_gi_hub:-${HUB_URL:-}}"
     _group_name="${_gi_group:-${GROUP_NAME:-}}"
     _subnet="${_gi_subnet:-${SUBNET:-}}"
+    if [ -z "$_subnet" ]; then
+        _subnet=$(derive_subnet)
+        [ -n "$_subnet" ] && log "Derived subnet from DHCP lease: $_subnet"
+    fi
     _hostname="${_gi_host:-${LAB_HOSTNAME:-}}"
     _enable_iperf="${ENABLE_IPERF:-false}"
     # Environment-only, like ENABLE_IPERF — no guestinfo key for this.
