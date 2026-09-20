@@ -21,25 +21,36 @@ The command path to a working hub and one registered node, for anyone who
 just wants to get moving. No verification steps, no explanations — those are
 in the numbered stages below; come back to them when something doesn't work.
 
-```sh
-# 1. One base Alpine VM, installed by hand (interactive — see BUILD_GUIDE §1-3)
-setup-alpine
-# then, once: apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester
-# (dropbear alone can't receive scp/sftp — see stage 1's note if git isn't
-# reachable from the VM)
-# then snapshot/clone it twice: one clone becomes the hub, one becomes the
-# node golden image — both already have the checkout
+Four separate steps, run on different VMs — copy-paste each block onto the
+VM it names, not all at once.
 
-# 2. Hub — do this first; its IP gets baked into the node image
-#    (on the hub clone)
+**1. One base Alpine VM**, installed by hand (interactive — see
+`BUILD_GUIDE.md` §1-3):
+
+```sh
+setup-alpine
+```
+
+Then, once: `apk add --no-cache git && git clone
+https://github.com/orneh24/lab-tester.git /root/lab-tester` (dropbear alone
+can't receive scp/sftp — see stage 1's note if git isn't reachable from the
+VM). Then snapshot/clone it twice: one clone becomes the hub, one becomes
+the node golden image — both already have the checkout.
+
+**2. Hub** — do this first; its IP gets baked into the node image (on the
+hub clone):
+
+```sh
 sh /root/lab-tester/install.sh hub -y   # asks nothing; or: sh hub/build-template.sh
 set-static-ip <hub-ip>/<cidr> <gateway>
 rc-service networking restart
 rc-service lab-tester-hub start
 # confirm: http://<hub-ip>/ loads
+```
 
-# 3. Node golden image
-#    (on the other clone)
+**3. Node golden image** (on the other clone):
+
+```sh
 sh /root/lab-tester/install.sh node -y   # asks nothing; or: sh node/build-template.sh
 vi /etc/lab-tester/config        # set HUB_URL, GROUP_NAME (SUBNET auto-derives from DHCP)
 /usr/local/bin/lab-tester/setup.sh
@@ -50,9 +61,12 @@ rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
       /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
 printf 'lab-tester-template\n' > /etc/hostname
 # now shut down and convert to a vCenter template
+```
 
-# 4. Clone the node template once per subnet
-#    (on each clone) set a unique hostname, then:
+**4. Clone the node template once per subnet** (on each clone) — set a
+unique hostname, then:
+
+```sh
 /usr/local/bin/lab-tester/register.sh
 # confirm it appears in http://<hub-ip>/endpoints
 ```

@@ -10,17 +10,30 @@ reachable.
 
 ## Deploy
 
-```sh
-# base VM: setup-alpine, then git clone the repo, then clone the VM twice
-apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester
+Four separate steps, run on different VMs — copy-paste each block onto the
+VM it names, not all at once.
 
-# Hub (build first — its IP gets baked into the node image)
+**1. Base VM** — install Alpine, then run this once before cloning it in
+vCenter into the two VMs below:
+
+```sh
+apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester
+```
+
+**2. Hub VM** (the clone that becomes the hub — build this first, its IP
+gets baked into the node image):
+
+```sh
 sh /root/lab-tester/install.sh hub -y   # or: sh hub/build-template.sh directly
 set-static-ip <hub-ip>/<cidr> <gateway>   # or guestinfo.hub.ip/.gateway pre-boot
 rc-service networking restart
 rc-service lab-tester-hub start
+```
 
-# Node golden image
+**3. Node golden image** (the other clone, kept as a template — not a
+deployed node itself):
+
+```sh
 sh /root/lab-tester/install.sh node -y   # or: sh node/build-template.sh directly
 vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME required; SUBNET auto-derives from DHCP
 /usr/local/bin/lab-tester/setup.sh
@@ -30,9 +43,13 @@ rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
       /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
 printf 'lab-tester-template\n' > /etc/hostname
 # now shut down, convert to vCenter template
+```
 
-# Per node clone: set a unique hostname, then either let node-setup.sh
-# prompt at the next login, or run it (or register.sh) by hand
+**4. Each deployed node** (every clone made from the golden image above) —
+set a unique hostname, then either let `node-setup.sh` prompt at the next
+login, or run it (or `register.sh`) by hand:
+
+```sh
 /usr/local/bin/lab-tester/register.sh
 ```
 
