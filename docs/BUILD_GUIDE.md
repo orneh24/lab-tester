@@ -252,10 +252,11 @@ rm -f /etc/dropbear/dropbear_*
 echo "" > /etc/machine-id
 
 # Reset hostname (clones should set their own)
-echo "lab-tester" > /etc/hostname
+printf 'lab-tester-template\n' > /etc/hostname
 
-# Clear config to force per-clone setup
-cp /etc/lab-tester/config.sample /etc/lab-tester/config
+# Remove config, firstboot and login-prompt stamps to force per-clone setup
+rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
+      /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
 
 # Clean logs
 rm -f /var/log/*.log
