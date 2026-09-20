@@ -278,13 +278,48 @@ if [ -d "${SRC_DIR}/../services" ]; then
 fi
 
 # -------------------------------------------------------------------
-# Detect hostname and IP
+# Detect hostname and IP, with a manual failsafe if DHCP never came through
+#
+# Nodes are DHCP by design, but a node with no address can never register
+# or be tested -- and nothing surfaces that anywhere except this VM's own
+# log (see register.sh's own IP check). Prompt for a one-time static
+# fallback rather than leaving the node silently absent from the mesh.
+#
+# This only helps when a human is actually watching. A firstboot run has
+# stdin redirected from /dev/null (firstboot.initd), so `read` there hits
+# an immediate EOF -- `|| _static_cidr=""` catches that explicitly rather
+# than letting `set -e` abort the rest of setup.sh over it.
 # -------------------------------------------------------------------
 MY_HOSTNAME=$(hostname)
 MY_IP=$(ip -4 -o addr show scope global | awk 'NR==1 {split($4,a,"/"); print a[1]}')
 
+if [ -z "$MY_IP" ]; then
+    log "WARNING: no IP address detected (DHCP may have failed)"
+    printf 'No IP via DHCP. Static IP/CIDR to configure now (blank to skip): '
+    read -r _static_cidr || _static_cidr=""
+    if [ -n "$_static_cidr" ]; then
+        printf 'Gateway: '
+        read -r _static_gw || _static_gw=""
+        IFACE=$(ip -o link show | awk -F': ' '!/lo/{print $2; exit}')
+        cat > /etc/network/interfaces <<EOF
+auto lo
+iface lo inet loopback
+
+auto ${IFACE}
+iface ${IFACE} inet static
+    address ${_static_cidr}
+    gateway ${_static_gw}
+EOF
+        rc-service networking restart
+        MY_IP=$(ip -4 -o addr show scope global | awk 'NR==1 {split($4,a,"/"); print a[1]}')
+        log "Static IP configured on ${IFACE}: ${_static_cidr} via ${_static_gw}"
+    else
+        log "Skipped -- this node stays unreachable until DHCP succeeds or the network is fixed by hand"
+    fi
+fi
+
 log "Hostname: $MY_HOSTNAME"
-log "IP: $MY_IP"
+log "IP: ${MY_IP:-none}"
 log "Group: $GROUP_NAME"
 
 # -------------------------------------------------------------------

@@ -612,6 +612,13 @@ cat /etc/network/interfaces
 - Node is on the wrong port group
 - VMXNET3 driver issue (rare -- check `dmesg | grep -i vmxnet`)
 
+If DHCP genuinely isn't available on this subnet, re-run `setup.sh` at a
+console: it detects the missing address and prompts for a one-time static
+IP/CIDR and gateway as a failsafe. This only helps when a human is attached
+— the zero-touch firstboot path runs with stdin closed specifically so it
+can't hang the boot on a prompt, so it skips this and the node just stays
+silently unreachable until someone fixes DHCP or runs `setup.sh` by hand.
+
 ### Tests Failing
 
 **Symptoms:** Dashboard shows failures for specific test types.

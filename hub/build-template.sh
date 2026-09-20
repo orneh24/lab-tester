@@ -358,6 +358,8 @@ EOF
 
 echo "Static IP configured on ${IFACE}: ${IP_CIDR} via ${GATEWAY}"
 echo "Restart networking: rc-service networking restart"
+echo "DNS is not configured -- edit /etc/resolv.conf by hand if the hub needs"
+echo "outbound resolution (e.g. a chrony NTP pool hostname)."
 SIPEOF
 
 chmod +x /usr/local/bin/set-static-ip
@@ -372,6 +374,12 @@ rm -f /etc/dropbear/dropbear_*_host_key
 
 # Clear machine-id
 : > /etc/machine-id 2>/dev/null || true
+
+# Clear resolv.conf. DHCP wrote this during the build's own internet access,
+# but once the hub goes static (set-static-ip / hub-setup.sh), nothing ever
+# refreshes it again -- left alone, a clone would silently keep resolving
+# through whatever DNS server the build network happened to hand out.
+: > /etc/resolv.conf 2>/dev/null || true
 
 # Clear logs
 find /var/log -type f -exec truncate -s 0 {} \; 2>/dev/null || true
