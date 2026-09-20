@@ -1,0 +1,4 @@
+#!/bin/sh
+# Dev shim for `dig @SERVER QUERY +short +time=2 +tries=1`. Any non-empty,
+# non-error-looking line is a resolved answer to run_dns_test.
+echo "203.0.113.10"

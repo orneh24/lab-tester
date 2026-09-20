@@ -43,6 +43,8 @@ Upsert keyed on `hostname`; `last_seen` is set server-side to UTC ISO-8601. Miss
 
 `GET /api/results?minutes=N` (default 10) — dashboard matrix. `GET /api/results/<source>/<target>` — drill-down, newest first, LIMIT 200.
 
+`GET /api/path-changes?minutes=N` (default 10) — detected traceroute path changes, `[{source, target, received_at, detail}]`. Reads `syslog` rows tagged `host=lab-tester-hub`/`mnemonic=%LABTESTER-5-PATHCHANGE`, written by `hub/app/pathchange.py` via a hook inside `push_results` (see Path-change detection below), not a new table.
+
 ## Syslog
 
 The hub also receives syslog on UDP/514 (`hub/app/syslog_server.py`, started by `serve.py`'s `main()` — deliberately not at import time, since the Flask reloader imports `app.app` twice and would double-start the listener). It is a separate ingest path from the test results and has no wire contract with the nodes — network devices (switches, firewalls, anything that speaks RFC3164) are the senders, and sending to it is entirely optional.
@@ -58,6 +60,16 @@ Storage rules that differ from `results`:
 - The listener is one thread with its own connection (`check_same_thread=False`, guarded by a lock). Do not reuse `get_db()` there — it is request-scoped via `g`.
 - Unparseable lines are stored with `raw` intact and null severity/mnemonic. Never drop a message because it did not parse.
 - Starting is idempotent: a second call sees the started flag, and a second process (Flask reloader) fails to bind and logs instead of crashing.
+
+## Path-change detection
+
+`POST /results` diffs each incoming `traceroute` row against the previous sample stored for that (source, target) pair (`_previous_traceroute`/`_note_path_change` in `app.py`, parsing/diff logic in `hub/app/pathchange.py`). A detected change is `INSERT`ed into `syslog` — not a new table — tagged `host=lab-tester-hub`, `mnemonic=%LABTESTER-5-PATHCHANGE`, severity 5, `source_ip=127.0.0.1`, using the batch's own `received` timestamp so it lands centred in the dashboard's ±5 min pinned window. `GET /api/path-changes` reads it back via `pathchange.split_message`.
+
+The diff rule: a hop position only counts when **both** samples got a real reply (`-q 1` means a single dropped probe is noise, not a change) — `parse_hops` simply omits no-reply hops, so comparing only hop numbers common to both samples makes this automatic. Path length alone is never a trigger for the same reason.
+
+The hook is wrapped in try/except, stderr-only on failure, and must never affect whether the batch's results are accepted — a detection bug costs nobody their results. Off-switch: `PATH_CHANGE_ENABLED` (`HUB_PATH_CHANGE_ENABLED`, default true). New index: `idx_results_trace ON results(source, target_hostname, test_type, received_at)` — without it, finding the previous traceroute for a pair falls back to `idx_results_source_target` and scans every row for that pair regardless of test type.
+
+This makes a hub-authored row the one row in `syslog` the hub itself can vouch for — see CLAUDE.md's Syslog section for why that's a label, not a trust boundary.
 
 ## Time
 
@@ -84,7 +96,7 @@ filter on UTC text comparison, so skew makes rows invisible rather than wrong.
 
 - `endpoints.hostname` is PRIMARY KEY — hostnames must be unique per clone. A duplicated hostname silently overwrites another node's registration; that is the most common cause of a "missing" node in the matrix.
 - `results` is append-only. Never UPDATE a row; the timeline depends on immutability.
-- Indexes exist on `received_at` and `(source, target_hostname)` for results, and on `received_at` and `host` for syslog. Any new query should use one of them or add its own index.
+- Indexes exist on `received_at`, `(source, target_hostname)`, and `(source, target_hostname, test_type, received_at)` for results, and on `received_at` and `host` for syslog. Any new query should use one of them or add its own index.
 - **Everything is stored in SQLite's own format, `YYYY-MM-DD HH:MM:SS`, and windows are `datetime('now', ...)`.** Write it with `sqlite_now()`; convert with `iso()` on the way out so browsers parse it as UTC. This is the opposite of what an earlier version of this file said, and the reason it matters is that the two formats sort against each other: `T` (0x54) is above space (0x20), so string-comparing an ISO timestamp against a `datetime('now', ...)` bound lets **every row from the same UTC date** through any window. See CLAUDE.md constraints 2 and 18.
 - The client's own `timestamp` field stays ISO-8601 and is passed through untouched — it is a record, never a filter. Filter on `received_at`, which the hub controls and which is immune to node clock drift.
 - Results are pruned **by age** (`HUB_RESULT_RETENTION_HOURS`), syslog **by row count** (`HUB_SYSLOG_MAX_ROWS`, id-range delete). They are bounded differently on purpose: see Retention below.

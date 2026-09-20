@@ -19,3 +19,8 @@ hub/agent/
 
 # Ad-hoc session screenshots, not project deliverables
 Claude outputs/
+
+# dev/ toolkit's own runtime state — hub db/log/pid, simulated node configs
+# and logs. The scripts and shims that generate this are tracked; what they
+# write is not. See dev/README.md.
+dev/run/

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Dev shim for `ip -4 -o addr show scope global` — register.sh's only use of
+# `ip`. It awk-parses the 4th whitespace field as "<addr>/<prefix>", so that
+# is the one thing this has to get right. DEV_IP lets run-node-cycle.sh give
+# each simulated node its own address; falls back to a fixed one otherwise.
+printf '2: eth0    inet %s/24 brd 10.255.255.255 scope global eth0\n' "${DEV_IP:-10.99.0.2}"

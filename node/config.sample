@@ -131,6 +131,23 @@ DNS_SERVER=
 DNS_QUERY=example.com
 
 # ---------------------------------------------------------------------
+# Console output
+# ---------------------------------------------------------------------
+
+# Print each cycle's results as a compact table (true/false). The hub
+# dashboard is still the source of truth; this is for an operator at the
+# node's own VM console, or SSH'd in, who wants to see whether THIS node's
+# tests are passing without opening the dashboard. Same table also lands in
+# /var/log/lab-tester/test-cycle.log and is available on demand via
+# `test-status` (see also /run/lab-tester/last-cycle.txt, and the summary
+# shown at interactive login).
+CONSOLE_OUTPUT=true
+
+# Device the table is written to. Change this for a serial console, e.g.
+# /dev/ttyS0.
+CONSOLE_DEVICE=/dev/console
+
+# ---------------------------------------------------------------------
 # Maintenance
 # ---------------------------------------------------------------------
 

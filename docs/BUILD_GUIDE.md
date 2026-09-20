@@ -849,6 +849,7 @@ From the machine hosting the project files, SCP them onto the VM. Adjust paths t
 # From your workstation:
 scp -O node/scripts/register.sh    root@<VM_IP>:/usr/local/bin/lab-tester/
 scp -O node/scripts/test-cycle.sh  root@<VM_IP>:/usr/local/bin/lab-tester/
+scp -O node/scripts/test-status.sh root@<VM_IP>:/usr/local/bin/lab-tester/
 scp -O node/scripts/setup.sh       root@<VM_IP>:/usr/local/bin/lab-tester/
 scp -O node/config.sample           root@<VM_IP>:/etc/lab-tester/config.sample
 scp -O node/services/iperf3.initd  root@<VM_IP>:/etc/init.d/iperf3
@@ -857,8 +858,15 @@ scp -O node/services/smb.conf      root@<VM_IP>:/etc/samba/smb.conf
 scp -O node/services/smtpd.initd   root@<VM_IP>:/etc/init.d/lab-smtpd
 scp -O node/services/smtpd.conf    root@<VM_IP>:/etc/smtpd/smtpd.conf
 scp -O node/services/lab-tester-httpd.conf root@<VM_IP>:/etc/httpd.conf
+scp -O node/services/login-status.sh root@<VM_IP>:/etc/profile.d/lab-tester-status.sh
 scp -O node/services/crontab       root@<VM_IP>:/etc/lab-tester/crontab
+ssh root@<VM_IP> 'chmod +x /usr/local/bin/lab-tester/*.sh && ln -sf /usr/local/bin/lab-tester/test-status.sh /usr/local/bin/test-status'
 ```
+
+`test-status.sh` is not part of the agent self-update manifest (only
+`test-cycle.sh` and `register.sh` are — see CLAUDE.md's Agent self-update
+section), so on a node built before it existed, this SCP-and-symlink step is
+the way to get it there without a template rebuild.
 
 > **Do not copy the crontab onto `/etc/crontabs/root`.** That replaces root's
 > crontab wholesale and destroys Alpine's `run-parts` entries, which are what
@@ -1012,6 +1020,7 @@ scp -O hub/app/__init__.py      root@<HUB_IP>:/opt/lab-tester-hub/app/
 scp -O hub/app/app.py           root@<HUB_IP>:/opt/lab-tester-hub/app/
 scp -O hub/app/config.py        root@<HUB_IP>:/opt/lab-tester-hub/app/
 scp -O hub/app/syslog_server.py root@<HUB_IP>:/opt/lab-tester-hub/app/
+scp -O hub/app/pathchange.py    root@<HUB_IP>:/opt/lab-tester-hub/app/
 scp -O hub/templates/dashboard.html root@<HUB_IP>:/opt/lab-tester-hub/templates/
 scp -O hub/templates/syslog.html    root@<HUB_IP>:/opt/lab-tester-hub/templates/
 scp -O hub/requirements.txt     root@<HUB_IP>:/opt/lab-tester-hub/
@@ -1029,6 +1038,10 @@ forget one:
   imports it at module level, so the service dies with `ModuleNotFoundError`
   before `main()` runs: no dashboard, no `/register`, no result collection.
   Copy it alongside `serve.py`, not as an optional extra.
+- **`pathchange.py` missing → same failure.** `app.py` imports it at module
+  level (`from . import pathchange`) for traceroute path-change detection, so
+  a missing file is the identical `ModuleNotFoundError` at startup, not a
+  degraded dashboard.
 - **`syslog.html` missing → only `/syslog` breaks**, with a template error.
   Everything else serves normally.
 

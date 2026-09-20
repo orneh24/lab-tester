@@ -38,6 +38,8 @@ Diagram: `docs/TOPOLOGY.md`.
   - `GET /endpoints` — mesh list (prunes stale endpoints as a side effect)
   - `POST /results` — result batch (runs the retention sweep as a side effect)
   - `GET /api/results?minutes=N`, `GET /api/results/<source>/<target>`
+  - `GET /api/path-changes?minutes=N` — detected traceroute path changes
+    (see Syslog below); default 10, matching `/api/results`
   - `DELETE /endpoints/<hostname>`
   - `GET|POST /targets`, `DELETE /targets/<name>` — static targets
   - `GET /agent/manifest`, `GET /agent/<script>` — agent distribution
@@ -102,6 +104,18 @@ payload size, which is the only test here that catches a path where peering
 is up and small packets pass but large transfers hang. On failure it steps
 down through common sizes to bracket where the path breaks.
 
+Every `traceroute` result is diffed hub-side against the previous sample for
+that (source, target) pair (`hub/app/pathchange.py`, hooked into
+`POST /results`); a detected change is logged as a tagged row in `syslog`
+(see below) and surfaced as a marker on the traceroute cell. The rule: **a
+hop position only counts when both samples got a real reply.** `traceroute`
+here runs `-q 1` (constraint 10 — one probe per hop), so a single dropped
+probe is ordinary noise, not a path change, and comparing only hops both
+samples reached makes that automatic rather than a separate check. Path
+length alone is never a trigger either — a trace that simply got shorter or
+longer produces no positional mismatch by itself; a real reroute always
+does.
+
 ### Static targets
 Addresses that run no agent — gateways, device loopbacks, outside hosts —
 held on the hub in the `targets` table and merged into every node's cycle.
@@ -155,6 +169,26 @@ configured to log to the hub simply has an empty `/syslog`.
   under host `kernel`, which then appears as its own device in the source
   filter and hides real messages behind a name nobody recognises.
 
+**A second writer, hub-authored.** `POST /results` also writes into `syslog`
+directly (`hub/app/pathchange.py`'s `_note_path_change`, not the UDP
+listener) when it detects a traceroute path change — tagged
+`host=lab-tester-hub`, `mnemonic=%LABTESTER-5-PATHCHANGE`, severity 5
+(notice: a path change is not inherently a fault), `source_ip=127.0.0.1`
+(literally true — written locally, never received over UDP). This is the one
+row in this table the hub itself can vouch for, and it gains no special
+protection from that: anything on the segment can send UDP claiming the same
+host/mnemonic, and `GET /api/path-changes` would serve it back. The tag is a
+**label, not a boundary** — blast radius is bounded (a spurious marker plus a
+syslog link; no `results` row is ever altered or lost), same as any other
+syslog row's untrusted-by-design status above. Covered by the same
+`HUB_SYSLOG_MAX_ROWS` row cap as everything else, with two accepted limits: a
+chatty device can evict path-change history before `results`' own retention
+does (`results` stays the durable evidence; the syslog row is a signpost),
+and with `HUB_SYSLOG_ENABLED=false` the cap's prune counter (which lives in
+the UDP listener) never runs, so hub-authored rows accumulate unbounded in
+principle — bounded in practice by how often paths actually change.
+Off-switch: `HUB_PATH_CHANGE_ENABLED` (default true).
+
 **Correlation from the dashboard.** The drill-down carries the moment across:
 each test card links to `/syslog` pinned to ±5 min around *that sample*, and
 the pair header links to the same window plus one link per group behind the
@@ -171,7 +205,7 @@ undisciplined one is surfaced rather than left to silently misalign every
 correlation.
 
 Config: `HUB_SYSLOG_ENABLED`, `HUB_SYSLOG_BIND`, `HUB_SYSLOG_PORT`,
-`HUB_SYSLOG_MAX_ROWS`, `HUB_BUSY_TIMEOUT_MS`.
+`HUB_SYSLOG_MAX_ROWS`, `HUB_BUSY_TIMEOUT_MS`, `HUB_PATH_CHANGE_ENABLED`.
 
 ### Agent self-update
 The hub serves `test-cycle.sh` and `register.sh` from
@@ -182,6 +216,13 @@ match, `sh -n`, and (for test-cycle.sh) a successful real run. The prior
 version is kept as `.known-good` and restored if that run fails. Opt a node out
 with `AGENT_AUTOUPDATE=false`.
 
+`test-status.sh` and its login-banner hook are **not** in this manifest — the
+console-output table they render lives inside `test-cycle.sh` and self-updates
+with it, but the viewer command itself is a separate new file, same category
+as `register.sh` (constraint 13): push it deliberately (`setup.sh` or a
+one-off `scp`) to nodes built before it existed. New clones get it from
+`build-template.sh`.
+
 ### Node (one per network segment under test)
 - Alpine Linux VM, ~128 MB RAM, DHCP on its interface
 - Installed to `/usr/local/bin/lab-tester/`, config at `/etc/lab-tester/config`
@@ -191,6 +232,14 @@ with `AGENT_AUTOUPDATE=false`.
 - Clients: curl, ssh, traceroute, iperf3, smbclient, fping, `nc` (hand-rolled
   SMTP conversation — see below) — driven by cron every 60s
 - Cloned from a single golden template
+- Each cycle's results also render as a compact table (one row per target,
+  one column per always-on test — H/S/M/L/T) to `/dev/console`
+  (`CONSOLE_OUTPUT`, on by default), the cycle log, a snapshot at
+  `/run/lab-tester/last-cycle.txt`, and on demand via `test-status`
+  (`-f` to follow, `-n N` for history) — the hub dashboard stays the source
+  of truth, but this lets an operator at the node's own console or over SSH
+  see whether *this* node's tests are passing without opening it. Shown
+  automatically at interactive login, next to the setup-wizard invite.
 
 ### Discovery
 - Hub is the registry — single source of truth
@@ -259,7 +308,8 @@ hub/
   build-template.sh   — builds the hub golden template
   serve.py            — production entrypoint (reads HUB_PORT at runtime)
   run.sh              — foreground launcher for debugging
-  app/                — Flask API (app.py, config.py, syslog_server.py)
+  app/                — Flask API (app.py, config.py, pathchange.py,
+                        syslog_server.py)
   templates/          — dashboard.html, syslog.html
   static/
   agent/              — scripts served to nodes (created at build time)
@@ -267,13 +317,14 @@ hub/
   scripts/            — hub-setup.sh
 node/
   build-template.sh   — builds the node golden template
-  scripts/            — register.sh, test-cycle.sh, setup.sh, node-setup.sh
+  scripts/            — register.sh, test-cycle.sh, setup.sh, node-setup.sh,
+                        test-status.sh (console/SSH results viewer)
   services/           — httpd.initd (lab-httpd), iperf3.initd,
                         smbd.initd (lab-smbd), smb.conf,
                         smtpd.initd (lab-smtpd), smtpd.conf, crontab,
                         lab-tester-httpd.conf, logrotate.conf,
                         firstboot.initd (lab-tester-firstboot),
-                        login-setup.sh
+                        login-setup.sh, login-status.sh
   config.sample
 docs/BUILD_GUIDE.md
 ```

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Dev shim for `ping -c 1 -W 2 -M do -s SIZE TARGET` — pmtu_probe's only call
+# shape (nothing else in this project invokes ping). Exit 0 = got a reply.
+# DEV_FAIL_HOSTS (comma-separated substrings) makes a target's PMTU probe
+# fail at every size, so run_pmtu_test reports "no ICMP response at any
+# size" for it — one controllable broken path for the demo mesh.
+_target="$*"
+_target="${_target##* }"
+
+for pat in $(printf '%s' "${DEV_FAIL_HOSTS:-}" | tr ',' ' '); do
+    [ -n "$pat" ] || continue
+    case "$_target" in *"$pat"*) exit 1 ;; esac
+done
+exit 0

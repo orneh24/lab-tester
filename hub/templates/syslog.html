@@ -19,6 +19,7 @@
     --yellow-bg: #2e2213;
     --blue:      #58a6ff;
     --gray:      #6e7681;
+    --cyan:      #39d2c0;
 }
 * { box-sizing: border-box; }
 body {
@@ -30,8 +31,33 @@ header {
     padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-card);
 }
 header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-header a { color: var(--blue); text-decoration: none; }
-header a:hover { text-decoration: underline; }
+
+/* Same nav pair as the dashboard's header: a link to the other page, and a
+   non-clickable marker for the page you're already on. Kept identical
+   between the two templates so the pair reads as one component. */
+.btn-nav {
+    background: var(--bg-hover);
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 4px;
+    text-decoration: none;
+}
+.btn-nav:hover { background: var(--cyan); color: var(--bg); text-decoration: none; }
+.btn-nav-current {
+    background: var(--cyan);
+    border: 1px solid var(--cyan);
+    color: var(--bg);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: default;
+}
 .status { margin-left: auto; color: var(--text-dim); font-size: 12px; }
 .filters {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -48,6 +74,8 @@ button {
     border-radius: 4px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer;
 }
 button:hover { border-color: var(--blue); }
+#toggle-live.off { color: var(--text-dim); }
+#toggle-live.on  { color: var(--green); border-color: var(--green); }
 .pinned {
     display: none; align-items: center; gap: 10px; padding: 8px 16px;
     background: var(--yellow-bg); border-bottom: 1px solid var(--border); color: var(--yellow);
@@ -82,8 +110,9 @@ td.msg { width: 100%; word-break: break-word; }
 <body>
 
 <header>
-    <h1>Lab Syslog</h1>
-    <a href="/">&larr; Connectivity matrix</a>
+    <h1>Syslog messages</h1>
+    <a href="/" class="btn-nav">Dashboard</a>
+    <span class="btn-nav-current">Syslog</span>
     <div class="status">
         <span id="clock" class="clock" title="Hub clock — every correlation on this page depends on it">clock: --</span>
         &nbsp;|&nbsp;
@@ -114,16 +143,17 @@ td.msg { width: 100%; word-break: break-word; }
     <label for="f-window">Window</label>
     <select id="f-window">
         <option value="15">15 min</option>
-        <option value="60" selected>1 hour</option>
+        <option value="60">1 hour</option>
         <option value="360">6 hours</option>
         <option value="1440">24 hours</option>
-        <option value="525600">everything</option>
+        <option value="525600" selected>everything</option>
     </select>
 
     <label for="f-q">Search</label>
     <input type="text" id="f-q" placeholder="text, mnemonic, interface…">
 
     <button id="refresh-now">Refresh</button>
+    <button id="toggle-live" class="on">Live Refresh: On</button>
 </div>
 
 <table id="log">
@@ -277,9 +307,21 @@ td.msg { width: 100%; word-break: break-word; }
             });
     }
 
+    // Independent of the pin: a pinned window forces refresh off entirely
+    // (the point is a moment that has already passed — see below), while
+    // this flag is the viewer's own on/off choice for the live, unpinned
+    // view. Defaults on, matching the auto-refresh this page always had.
+    var liveRefresh = true;
+
     function setAutoRefresh() {
         if (timer) clearInterval(timer);
-        if (!pinFrom && !pinTo) timer = setInterval(refresh, 15000);
+        if (!pinFrom && !pinTo && liveRefresh) timer = setInterval(refresh, 15000);
+    }
+
+    function setLiveButton(on) {
+        var btn = document.getElementById("toggle-live");
+        btn.textContent = "Live Refresh: " + (on ? "On" : "Off");
+        btn.className = on ? "on" : "off";
     }
 
     if (pinFrom || pinTo) {
@@ -287,12 +329,20 @@ td.msg { width: 100%; word-break: break-word; }
         document.getElementById("pinned-text").textContent =
             "Pinned window: " + localTime(pinFrom) + " → " + localTime(pinTo) + " (auto-refresh off)";
         document.getElementById("f-window").disabled = true;
+        document.getElementById("toggle-live").style.display = "none";
     }
+
+    document.getElementById("toggle-live").addEventListener("click", function() {
+        liveRefresh = !liveRefresh;
+        setLiveButton(liveRefresh);
+        setAutoRefresh();
+    });
 
     document.getElementById("clear-window").addEventListener("click", function() {
         pinFrom = pinTo = null;
         document.getElementById("pinned").style.display = "none";
         document.getElementById("f-window").disabled = false;
+        document.getElementById("toggle-live").style.display = "";
         setAutoRefresh();
         refresh();
     });

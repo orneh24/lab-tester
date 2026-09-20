@@ -5,12 +5,14 @@ import os
 import hashlib
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 
 from flask import Flask, request, jsonify, render_template, g, Response
 
 from . import config
 from . import syslog_server
+from . import pathchange
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "..", "templates"),
             static_folder=os.path.join(os.path.dirname(__file__), "..", "static"))
@@ -87,6 +89,7 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_results_received ON results(received_at);
         CREATE INDEX IF NOT EXISTS idx_results_source_target ON results(source, target_hostname);
+        CREATE INDEX IF NOT EXISTS idx_results_trace ON results(source, target_hostname, test_type, received_at);
         CREATE INDEX IF NOT EXISTS idx_syslog_received ON syslog(received_at);
         CREATE INDEX IF NOT EXISTS idx_syslog_host ON syslog(host);
     """)
@@ -142,6 +145,64 @@ def prune_stale_endpoints(db):
     db.execute(
         "DELETE FROM endpoints WHERE last_seen < datetime('now', ? || ' hours')",
         (f"-{config.STALE_ENDPOINT_HOURS}",),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Traceroute path-change detection
+#
+# A traceroute result already lands in results.output every cycle; nothing
+# compared one sample to the next until now. Detection happens here, hub-side,
+# inside push_results — logged into the *existing* syslog table (tagged, not a
+# new table) so the dashboard's existing ±5 min correlation links work on it
+# for free. See pathchange.py for the parsing/diff rules themselves.
+#
+# A hub-authored syslog row is, honestly, the one row in this table that IS
+# trustworthy — and gains no special protection from that: anything on the
+# segment can send UDP claiming host=lab-tester-hub with the matching
+# mnemonic, and /api/path-changes would serve it. The tag is a label, not a
+# boundary. Blast radius is bounded (a spurious marker + a syslog link; no
+# result row is ever altered or lost).
+# ---------------------------------------------------------------------------
+
+def _previous_traceroute(db, source, target):
+    """The most recent traceroute result stored for this (source, target).
+
+    id DESC breaks ties: every row in one POST /results batch shares the same
+    received_at stamp (stamped once per request), so ordering by timestamp
+    alone can't order same-batch rows. /api/syslog already breaks ties this
+    way for the same reason.
+    """
+    return db.execute(
+        """SELECT output, received_at FROM results
+           WHERE source = ? AND target_hostname = ? AND test_type = 'traceroute'
+           ORDER BY received_at DESC, id DESC LIMIT 1""",
+        (source, target),
+    ).fetchone()
+
+
+def _note_path_change(db, source, target, target_ip, prev_row, cur_output, received):
+    """Diff the new traceroute sample against the previous one; log a change.
+
+    Uses the *same* `received` value already computed for this batch (not a
+    second sqlite_now() call), so the synthetic row lands dead-centre in the
+    dashboard's existing ±5 min pinned window around this sample.
+    """
+    if prev_row is None:
+        return
+    prev_hops = pathchange.parse_hops(prev_row["output"])
+    cur_hops = pathchange.parse_hops(cur_output)
+    detail = pathchange.diff_hops(prev_hops, cur_hops)
+    if detail is None:
+        return
+    message = pathchange.format_message(source, target, target_ip, detail)
+    raw = pathchange.format_raw(prev_hops, cur_hops)
+    db.execute(
+        """INSERT INTO syslog
+           (received_at, source_ip, host, facility, severity, mnemonic, device_time, message, raw)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)""",
+        (received, pathchange.SOURCE_IP, pathchange.HOST, pathchange.FACILITY,
+         pathchange.SEVERITY, pathchange.MNEMONIC, message, raw),
     )
 
 
@@ -262,6 +323,26 @@ def push_results():
             # Keep the row rather than reject the batch: a bad latency is worth
             # less than the pass/fail beside it.
             latency = None
+
+        target_hostname = text(r, "target_hostname")
+        target_ip = text(r, "target_ip")
+        test_type = text(r, "test_type")
+        output = text(r, "output")
+
+        # Path-change detection: look up the previous traceroute for this pair
+        # on the *same* connection (so an earlier row in this same batch is
+        # visible) before inserting the new one. Swallowed on any failure —
+        # this is a derived convenience, and a detection bug must never cost
+        # a node its results. A mid-transaction exception here doesn't roll
+        # back statements already executed, so nothing already written is lost.
+        prev_trace = None
+        if test_type == "traceroute" and config.PATH_CHANGE_ENABLED:
+            try:
+                prev_trace = _previous_traceroute(db, str(source), target_hostname)
+            except Exception as exc:
+                prev_trace = None
+                sys.stderr.write("[pathchange] lookup failed: {}\n".format(exc))
+
         db.execute(
             """INSERT INTO results
                (source, target_hostname, target_ip, test_type, success,
@@ -269,16 +350,23 @@ def push_results():
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 str(source),
-                text(r, "target_hostname"),
-                text(r, "target_ip"),
-                text(r, "test_type"),
+                target_hostname,
+                target_ip,
+                test_type,
                 1 if r.get("success") else 0,
                 latency,
-                text(r, "output"),
+                output,
                 text(r, "timestamp", iso(received)),
                 received,
             ),
         )
+
+        if test_type == "traceroute" and config.PATH_CHANGE_ENABLED:
+            try:
+                _note_path_change(db, str(source), target_hostname, target_ip,
+                                   prev_trace, output, received)
+            except Exception as exc:
+                sys.stderr.write("[pathchange] detection failed: {}\n".format(exc))
 
     # Opportunistic retention sweep — avoids needing a separate cron job on
     # the hub. One indexed DELETE per push is cheap at this scale.
@@ -326,6 +414,51 @@ def api_results_pair(source, target):
         (source, target),
     ).fetchall()
     return jsonify([result_row(r) for r in rows])
+
+
+@app.route("/api/path-changes", methods=["GET"])
+def api_path_changes():
+    """Detected traceroute path changes, newest first. ?minutes=N (default 10).
+
+    Reads the syslog rows _note_path_change() writes, filtered by the tag
+    (host + mnemonic) that marks them as hub-authored rather than
+    device-sourced. A dedicated endpoint — rather than the dashboard filtering
+    /api/syslog itself — keeps the message format's only reader next to its
+    only writer (pathchange.split_message), and keeps dashboard.html consuming
+    structured JSON like every other route instead of becoming a second place
+    that parses syslog text.
+
+    Same default window as /api/results, so a marker can never outlive the
+    cell it annotates.
+    """
+    minutes = request.args.get("minutes", "10")
+    try:
+        minutes = int(minutes)
+    except ValueError:
+        minutes = 10
+    minutes = abs(minutes)
+
+    db = get_db()
+    rows = db.execute(
+        """SELECT received_at, message FROM syslog
+           WHERE host = ? AND mnemonic = ?
+             AND received_at >= datetime('now', ? || ' minutes')
+           ORDER BY received_at DESC""",
+        (pathchange.HOST, pathchange.MNEMONIC, f"-{minutes}"),
+    ).fetchall()
+
+    out = []
+    for r in rows:
+        parsed = pathchange.split_message(r["message"])
+        if not parsed:
+            continue
+        out.append({
+            "source": parsed["source"],
+            "target": parsed["target"],
+            "received_at": iso(r["received_at"]),
+            "detail": parsed["detail"],
+        })
+    return jsonify(out)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Dev shim for `iperf3 -c TARGET -t 3 -J`. run_iperf3_test only reads
+# .end.sum_sent.bits_per_second out of the JSON.
+echo '{"end":{"sum_sent":{"bits_per_second": 943123456.0}}}'

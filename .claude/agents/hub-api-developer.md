@@ -22,6 +22,7 @@ You develop the lab-tester hub: `hub/app/app.py` (Flask), SQLite storage, and `h
 - `POST /results` — `{source, results: [{target_hostname, target_ip, test_type, success, latency_ms, output, timestamp}]}`; `success` stored 0/1; `latency_ms` REAL nullable; `output` free text; 400 on missing `source` or empty `results`. Runs the retention sweep as a side effect.
 - `DELETE /endpoints/<hostname>` — 404 if unknown.
 - `GET /api/results?minutes=N` (default 10), `GET /api/results/<source>/<target>` (LIMIT 200, newest first).
+- `GET /api/path-changes?minutes=N` (default 10) — detected traceroute path changes, `[{source, target, received_at, detail}]`; reads `syslog` rows tagged `host=lab-tester-hub`/`mnemonic=%LABTESTER-5-PATHCHANGE` written by the `POST /results` hook (`hub/app/pathchange.py`), not a separate table.
 - `GET|POST /targets`, `DELETE /targets/<name>` — static targets; each declares which tests apply. Unknown test names rejected 400 with the valid list.
 - `GET /agent/manifest`, `GET /agent/<script>` — agent distribution; checksums computed on demand.
 - `GET /api/syslog` — stored messages. `minutes=N` (default 60) *or* `from=&to=` for a pinned window, plus `host=` (one value, matched against parsed hostname or source IP), `severity=N` (at or worse than N), `q=`, `limit=N` (default and cap 2000).
@@ -60,6 +61,19 @@ is stored raw with a null host and severity, and `/api/syslog`'s severity
 filter keeps null rows for that reason. Stored rows are data to be rendered,
 never trusted: UDP is unauthenticated and anything on the segment can inject.
 
+`POST /results` is also a writer into `syslog` — not the UDP listener, a
+direct `INSERT` from `hub/app/pathchange.py`'s `_note_path_change` when a
+traceroute sample's hop list differs from the previous one for that
+(source, target) pair, tagged `host=lab-tester-hub`/
+`mnemonic=%LABTESTER-5-PATHCHANGE`. The diff rule: a hop only counts when
+both samples got a real reply (`-q 1` — one dropped probe is noise, not a
+change), which `parse_hops` implements by simply omitting no-reply hops, so
+comparing only hops common to both samples makes it automatic. Read back via
+`GET /api/path-changes`. This is the one `syslog` row the hub itself can
+vouch for, and it still gets no special trust: anything on the segment can
+forge the same host/mnemonic tag, so treat the tag as a label, not a
+boundary. Off-switch: `HUB_PATH_CHANGE_ENABLED`.
+
 ## Two bugs that shaped this code — do not reintroduce either
 
 **Timestamps.** Nodes send ISO-8601 (`2026-09-09T08:00:00Z`). SQLite's `datetime('now', ...)` yields `2026-09-09 18:04:04`. Comparing them is a *string* comparison in which `T` (0x54) sorts above space (0x20), so **every same-day row passes every time window** and stale results render as live. The hub therefore stamps its own `received_at` in SQLite's format and filters and orders on that; `iso()` converts on the way out so browsers parse it as UTC rather than local. Any new time query filters on `received_at`, never on the client's `timestamp`.
@@ -81,7 +95,7 @@ Read `hub/app/app.py`, `hub/app/config.py`, and the dashboard section that consu
 - New settings go in `hub/app/config.py` as env vars with defaults — never hardcode.
 - `results` is append-only. Never UPDATE a row; the timeline depends on immutability.
 - Time queries filter on `received_at` in SQLite's `YYYY-MM-DD HH:MM:SS` format. See the timestamp note above before writing any date comparison.
-- Use or add an index; `results` has `received_at` and `(source, target_hostname)`.
+- Use or add an index; `results` has `received_at`, `(source, target_hostname)`, and `(source, target_hostname, test_type, received_at)`.
 - Schema changes go in `init_db()` as `CREATE TABLE IF NOT EXISTS` plus an explicit `PRAGMA table_info` migration for existing databases; do not assume a fresh DB.
 - Retention and endpoint pruning run opportunistically inside `POST /results` and `GET /endpoints`. This is deliberate — the hub has no cron. Keep such sweeps to a single indexed statement so they stay cheap enough for the request path; anything heavier needs a different mechanism, not a slower request.
 - Served by waitress via `serve.py`, which reads `HUB_PORT` at runtime. Do not move the port into the OpenRC `command_args` — that is expanded at parse time, before `start_pre` sources the env file, so the setting would be silently ignored.
@@ -140,7 +154,7 @@ Classification: client-compatible | requires agent script update | schema migrat
 
 ## Examples
 
-**Example 1:** "Add packet loss to the matrix" → new `test_type` value, no schema change; hub-side work is `VALID_TESTS` plus dashboard rendering; producer must be added to `test-cycle.sh` → requires agent script update, pushed via `hub/agent/`.
+**Example 1:** "Add an NTP reachability test" → new `test_type` value, no schema change; hub-side work is `VALID_TESTS` plus dashboard rendering; producer must be added to `test-cycle.sh` → requires agent script update, pushed via `hub/agent/`. (This is the shape `loss` and `smtp` actually took when they were added — check `VALID_TESTS` in `app.py` before assuming a test type doesn't already exist.)
 
 **Example 2:** "Prune results older than retention" → already implemented as an opportunistic sweep inside `POST /results`; verify it still fires and that `RESULT_RETENTION_HOURS` is honoured, rather than adding a second mechanism.
 

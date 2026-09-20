@@ -1,0 +1,18 @@
+#!/bin/sh
+# Dev shim for `fping -c N -p MS -t MS -q TARGET`. Real fping writes its
+# summary line to stderr; run_loss_test captures both streams, so this does
+# too. DEV_FAIL_HOSTS (comma-separated substrings) simulates 100% loss for a
+# target, matching the one-broken-path pattern the other shims use.
+_target="$*"
+_target="${_target##* }"
+
+for pat in $(printf '%s' "${DEV_FAIL_HOSTS:-}" | tr ',' ' '); do
+    [ -n "$pat" ] || continue
+    case "$_target" in
+        *"$pat"*)
+            printf '%s : xmt/rcv/%%loss = 10/0/100%%\n' "$_target" >&2
+            exit 1
+            ;;
+    esac
+done
+printf '%s : xmt/rcv/%%loss = 10/10/0%%, min/avg/max = 0.31/0.48/0.72\n' "$_target" >&2

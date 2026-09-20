@@ -1,0 +1,25 @@
+#!/bin/sh
+# Dev shim for `traceroute -n -q 1 -w 2 -m HOPS TARGET`. run_traceroute_test
+# only checks that the last output line contains the target IP, so three
+# fake hops ending at the target is enough to read as success.
+#
+# DEV_TRACE_PATH overrides the hop list: a space-separated sequence of hop
+# addresses, e.g. "10.0.0.1 10.0.0.9" — the last one should be the actual
+# target IP so run_traceroute_test still reads success. Same precedent as
+# DEV_FAIL_HOSTS. Lets a session produce a real hub-side path-change
+# detection end to end (run once with the default path, then again with a
+# different DEV_TRACE_PATH for the same pair) without touching a real node.
+_target="$*"
+_target="${_target##* }"
+
+if [ -n "${DEV_TRACE_PATH:-}" ]; then
+    _hop=0
+    for _addr in $DEV_TRACE_PATH; do
+        _hop=$((_hop + 1))
+        printf ' %d  %s  %d.000 ms\n' "$_hop" "$_addr" "$_hop"
+    done
+else
+    echo " 1  10.0.0.1  1.111 ms"
+    echo " 2  10.0.0.2  2.222 ms"
+    printf ' 3  %s  3.333 ms\n' "$_target"
+fi

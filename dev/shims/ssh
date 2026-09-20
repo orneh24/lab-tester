@@ -1,0 +1,19 @@
+#!/bin/sh
+# Dev shim for the SSH test: `ssh -o ... -i KEY root@TARGET echo ok`.
+# run_ssh_test greps stdout for a literal "ok" line. DEV_FAIL_HOSTS
+# (comma-separated substrings) simulates a refused connection for a target.
+_target=""
+for a in "$@"; do
+    case "$a" in *@*) _target="${a#*@}" ;; esac
+done
+
+for pat in $(printf '%s' "${DEV_FAIL_HOSTS:-}" | tr ',' ' '); do
+    [ -n "$pat" ] || continue
+    case "$_target" in
+        *"$pat"*)
+            echo "dev-shim ssh: connection refused" >&2
+            exit 255
+            ;;
+    esac
+done
+echo ok

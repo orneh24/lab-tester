@@ -250,10 +250,12 @@ cp -f "${SCRIPT_DIR}/scripts/register.sh"    "$INSTALL_DIR/register.sh"
 cp -f "${SCRIPT_DIR}/scripts/test-cycle.sh"  "$INSTALL_DIR/test-cycle.sh"
 cp -f "${SCRIPT_DIR}/scripts/setup.sh"       "$INSTALL_DIR/setup.sh"
 cp -f "${SCRIPT_DIR}/scripts/node-setup.sh"  "$INSTALL_DIR/node-setup.sh"
+cp -f "${SCRIPT_DIR}/scripts/test-status.sh" "$INSTALL_DIR/test-status.sh"
 chmod +x "$INSTALL_DIR"/*.sh
 
 # On PATH by name, same as the hub's hub-setup.sh / set-static-ip.
 ln -sf "$INSTALL_DIR/node-setup.sh" /usr/local/bin/node-setup.sh
+ln -sf "$INSTALL_DIR/test-status.sh" /usr/local/bin/test-status
 
 # -------------------------------------------------------------------
 # 5. Install sample config
@@ -287,6 +289,11 @@ chmod +x /etc/init.d/lab-tester-firstboot
 # Invite an unconfigured node to run node-setup.sh at first interactive
 # login, where a real tty is guaranteed (unlike an OpenRC start()).
 cp -f "${SCRIPT_DIR}/services/login-setup.sh" /etc/profile.d/lab-tester-node-setup.sh
+
+# Show the last test cycle plus a test-status usage hint at every
+# interactive login of a configured node — same tty guard as
+# login-setup.sh above, see its own header comment.
+cp -f "${SCRIPT_DIR}/services/login-status.sh" /etc/profile.d/lab-tester-status.sh
 
 # Samba (SMB probe server). Config is installed unconditionally like the
 # other service files, but — unlike dropbear/lab-httpd below — lab-smbd is

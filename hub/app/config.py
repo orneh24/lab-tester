@@ -42,3 +42,10 @@ HEALTH_SERVICES = [
     ).split(",") if s.strip()
 ]
 HEALTH_SERVICE_TIMEOUT_S = int(os.environ.get("HUB_HEALTH_SERVICE_TIMEOUT_S", "3"))
+
+# ---------------------------------------------------------------------------
+# Traceroute path-change detection
+# ---------------------------------------------------------------------------
+# Off-switch for an operator who wants /syslog to contain device messages
+# only. Default on, same precedent as SYSLOG_ENABLED above.
+PATH_CHANGE_ENABLED = os.environ.get("HUB_PATH_CHANGE_ENABLED", "true").lower() in ("true", "1", "yes")

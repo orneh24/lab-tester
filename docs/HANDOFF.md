@@ -44,6 +44,145 @@ and intent only.
 
 ## Recent changes
 
+**Dashboard: Recent Changes / Recent Syslog panels, syslog page nav and controls (2026-09-20).**
+
+Additive dashboard/template work, no backend change beyond reusing existing
+routes.
+
+1. **`hub/templates/dashboard.html`** — two new sections between the
+   Connectivity Matrix and Static Targets:
+   - **Recent Changes** — the last 15 *transitions*, not raw state: a test
+     flipping pass→fail or fail→pass, a detected traceroute path change
+     (reusing `/api/path-changes`), and a collapse rule for a pair whose
+     *every* declared test type fails in the same cycle — rendered as one
+     "ALL tests FAILED (N tests)" row instead of N separate flip rows.
+     Computed client-side in `computeRecentChanges()` from a wider
+     `/api/results?minutes=60` fetch (deliberately separate from the
+     matrix's own `minutes=10` fetch). Rows are clickable and open the
+     existing Test Detail panel.
+   - **Recent Syslog** — last 10 messages via `/api/syslog?minutes=1440&limit=10`,
+     a compressed preview of `/syslog` with a "View all →" link.
+2. **Nav buttons** — `dashboard.html` and `syslog.html` each get a
+   `Dashboard`/`Syslog` button pair in the header: one real link (`.btn-nav`)
+   to the other page, one non-clickable `<span class="btn-nav-current">`
+   marking which page you're on. Replaces `syslog.html`'s old plain
+   "← Connectivity matrix" text link.
+3. **`syslog.html`** — heading changed from "Lab syslog" to "Syslog messages";
+   the `Window` filter now defaults to "everything" instead of the last hour;
+   a `#toggle-live` button added to turn the existing 15s auto-refresh on/off
+   (hidden when a `from`/`to` window is pinned, same condition that already
+   disables the `Window` select in that case).
+
+No wire-contract change, no new routes — `/api/path-changes` and
+`/api/syslog` already existed. Verified live via the `dev/` toolkit: a
+static target with 2 declared tests correctly collapsed to a single "ALL
+tests FAILED" row when both flipped together in one cycle; a mesh pair with
+more test types (one already permanently down) correctly stayed itemized as
+separate rows instead of collapsing.
+
+**Node console-output feature: `test-status` command and login banner (2026-09-20).**
+
+Client-compatible — the wire contract to the hub is untouched; this is purely
+what a node shows at its own console/SSH session. Use case: view a node's own
+test results directly without opening the hub dashboard, e.g. mid coding
+session on that VM.
+
+1. **`node/scripts/test-cycle.sh`** — each cycle now also renders a compact
+   table (one row per target, one column per always-on test type — H/S/M/L/T)
+   to `/dev/console` (`CONSOLE_OUTPUT`, on by default; device configurable via
+   `CONSOLE_DEVICE`), in addition to the existing cycle log. Also written to
+   a snapshot file at `/run/lab-tester/last-cycle.txt` so it can be read back
+   without re-running a cycle.
+2. **`node/scripts/test-status.sh`** (new) — reads the snapshot by default;
+   `-f`/`--follow` tails it live, `-n N` shows the last N cycles from the log.
+   Symlinked onto `PATH` as `test-status`.
+3. **`node/services/login-status.sh`** (new) — a `/etc/profile.d` hook that
+   shows the last test result and mentions `test-status`'s availability/syntax
+   at every interactive login, next to the existing setup-wizard invite. Same
+   three-layer guard as `login-setup.sh` (interactive shell, real tty, stamp
+   file), so it never fires for `ssh host cmd` or a non-interactive scp/rsync
+   shell.
+4. **Not in the agent self-update manifest, deliberately** — `test-cycle.sh`
+   self-updates via `hub/agent/` and carries the table-rendering logic with
+   it, but `test-status.sh`/`login-status.sh` themselves are separate files,
+   same category as `register.sh` (constraint 13): pushed deliberately
+   (`node/build-template.sh` for new clones, `setup.sh` or a one-off `scp`
+   for nodes built before this feature existed).
+
+**Traceroute path-change detection (2026-09-20).**
+
+Client-compatible — no wire-contract change, `test-cycle.sh` untouched. A
+traceroute result already landed in `results.output` every cycle; nothing
+compared one sample to the next before this. Detection is hub-side, inside
+`POST /results`, logged into the **existing** `syslog` table (tagged, not a
+new table) and surfaced on the dashboard via the existing `/syslog`
+correlation pattern — chosen over a dedicated `path_changes` table (more new
+code, duplicates what `/syslog` already does) and over a dashboard-only
+computation (no durable record for a pair nobody has open).
+
+1. **`hub/app/pathchange.py`** (new) — pure stdlib, never raises. `parse_hops`
+   turns raw traceroute text into an ordered `(hop_number, address)` list,
+   keyed by traceroute's own hop number so a header line or a merged stderr
+   line (the node captures `2>&1`) can't shift later hops; a hop with no
+   reply or a non-IPv4 token is simply omitted. `diff_hops` compares only hop
+   numbers present in **both** samples — the noise-suppression rule
+   (`-q 1` means a single dropped probe is ordinary noise) and the
+   length-is-never-a-trigger rule both fall out of that one design choice
+   rather than needing separate checks. `format_message`/`format_raw`/
+   `split_message` keep the syslog message shape's writer and reader in one
+   place.
+2. **`hub/app/app.py`** — new index `idx_results_trace ON results(source,
+   target_hostname, test_type, received_at)`; `_previous_traceroute`/
+   `_note_path_change` helpers; a hook inside `push_results`'s existing loop
+   (before each traceroute row's `INSERT`, look up the previous one on the
+   same connection; after, note the change if any) wrapped in try/except,
+   stderr-only on failure — a detection bug must never cost a node its
+   results; new `GET /api/path-changes?minutes=N` route.
+3. **`hub/app/config.py`** — `PATH_CHANGE_ENABLED` (`HUB_PATH_CHANGE_ENABLED`,
+   default true).
+4. **`hub/templates/dashboard.html`** — one more fetch per refresh
+   (`/api/path-changes?minutes=10`, same window as `/api/results`);
+   `pathChangeMap()`; `renderIndicators()` composes a `.changed` marker
+   (yellow inset ring, `--yellow` token) onto the traceroute cell in both the
+   mesh and static-target matrices; the Test Detail panel gets one more line
+   under the traceroute card linking out via the existing `syslogUrl()` ±5
+   min pin. `syslog.html` needed no change — it already renders host/severity/
+   mnemonic/message generically.
+5. **`dev/shims/traceroute`** — `DEV_TRACE_PATH` env override (space-separated
+   hop list; default unchanged, the original fixed 3-hop output), same
+   precedent as `DEV_FAIL_HOSTS`, so a coding session can produce a real path
+   change end to end without a real node.
+6. **`hub/build-template.sh`** — `HUB_PATH_CHANGE_ENABLED=true` added to the
+   `hub.env` heredoc (a drift-checker pass caught this missing on first
+   landing — every other hub setting has a `hub.env` line, this one hadn't).
+
+**The honest trade-off, written down in CLAUDE.md's Syslog section:** a
+hub-authored row is the one row in `syslog` that's actually trustworthy, and
+gains no special protection from it — anything on the segment can forge the
+same `host=lab-tester-hub`/`mnemonic=%LABTESTER-5-PATHCHANGE` tag, and
+`GET /api/path-changes` would serve it back. The tag is a label, not a
+boundary; blast radius is bounded (a spurious marker plus a syslog link, no
+`results` row ever altered or lost).
+
+Verified: unit tests for `pathchange.py` standalone (identical→no change,
+`*` at the differing position→no change, real mid-path swap→right hop
+number, length-only change→no change, malformed/empty/IPv6→`[]`→no change,
+`split_message(format_message(...))` round-trips) — all passed. Integration
+via `dev/hub-start.sh` + `dev/run-node-cycle.sh`: a second identical cycle
+produced no syslog row (false-positive check); `DEV_TRACE_PATH` produced
+exactly one path-change row with the correct hop number and both hop lists
+in `raw`; `/api/path-changes` returned the right source/target/detail with
+`received_at` ending in `Z`; a garbage traceroute shim output still let
+`POST /results` accept the full batch (row count grew by the full batch,
+no error); `HUB_SYSLOG_ENABLED=false` still ingested results and still wrote
+path-change rows (the table exists independent of the listener);
+`EXPLAIN QUERY PLAN` confirmed `idx_results_trace` is actually used. Dashboard
+rendered via Playwright (system Chrome, no `/opt/pw-browsers` on this
+workstation): the `.changed` marker appears on the traceroute cell in both
+matrices, correctly asymmetric by direction (a→b marked, b→a not); the
+detail-panel line and its syslog link work, landing on the pinned row; no
+console/pageerror events.
+
 **`set-static-ip` gains optional DNS and hostname arguments (2026-09-20).**
 
 `set-static-ip <ip/cidr> <gateway> [dns] [hostname]` — two new optional
@@ -497,8 +636,12 @@ but **nothing here works today**:
 - **Renaming.** `lab-tester` (and possibly the separate `lab-butler` project)
   may get renamed — current name is generic and a poor search/package term.
   Candidate: `lab-scout` (exact-name collision with an unrelated, low-traffic
-  GitHub project, `mithr4ndir/lab-scout`; judged low risk). No decision made,
-  no renaming done yet — this is tracking only.
+  GitHub project, `mithr4ndir/lab-scout`; judged low risk). Also floated:
+  something incorporating "Flux" paired with a network-related term — e.g.
+  `netflux`, `fluxmesh`, `fluxpath`, `fluxroute` — evoking traffic that
+  flows and shifts across paths, which fits the path-change-detection framing
+  in particular. None of these have been checked for name collisions. No
+  decision made, no renaming done yet — this is tracking only.
 - **Syslog has never run on the real hub VM.** Everything so far is a local
   Python process on a workstation. Confirm the OpenRC service starts the
   listener, that UDP/514 binds under it (514 is privileged — the service runs

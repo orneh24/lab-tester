@@ -63,6 +63,24 @@ and prints or runs the matching `build-template.sh` — it refuses outright on
 a VM that's already configured, since re-running `build-template.sh` there
 wipes the existing config/hostname or the hub's database.
 
+**VMware guestinfo parameters** — set as custom keys on the VM in vCenter
+(VM Options → Advanced → Configuration Parameters, or PowerCLI's
+`New-AdvancedSetting`) before first boot, so a clone configures itself with
+no console session. All optional except the two marked required; anything
+left unset falls back to an environment variable, then an interactive prompt
+at first login.
+
+| Key | Applies to | Example | Notes |
+|---|---|---|---|
+| `guestinfo.lab.hub_url` | node | `http://10.0.0.100` | **required** |
+| `guestinfo.lab.group` | node | `site-a` | **required** — clusters nodes on the dashboard, filters syslog by sender |
+| `guestinfo.lab.subnet` | node | `10.1.1.0/24` | derived from the DHCP lease if omitted |
+| `guestinfo.lab.hostname` | node | `test-node-site-a` | derived as `<prefix>-<group>` if omitted; must be unique lab-wide |
+| `guestinfo.lab.dns_server` | node | `10.0.0.53` | unset skips the DNS test entirely |
+| `guestinfo.lab.dns_query` | node | `example.com` | name to resolve, used only when `dns_server` is set |
+| `guestinfo.hub.ip` | hub | `10.0.0.100/24` | with neither hub key set, `hub-setup.sh` prompts at first login instead |
+| `guestinfo.hub.gateway` | hub | `10.0.0.1` | |
+
 Full command/config reference: [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
 Checklist with verification steps: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
@@ -110,6 +128,36 @@ Full design and the constraints that must not regress are in
 > See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for what's still unverified
 > and [`docs/HANDOFF.md`](docs/HANDOFF.md) for current state and open items.
 
+### Why not Docker?
+
+The point of this project is to measure a real network path, not a
+container bridge pretending to be one. Hub and nodes are full Alpine VMs on
+separate subnets specifically so the traffic under test crosses the same
+switches, VLANs, firewalls and inspection appliances real production traffic
+would — Docker containers on one host typically share a kernel and a virtual
+bridge, which is exactly the part of the path this project exists to
+exercise. Several tests only mean something because of that separation: PMTU
+only catches a real tunnel/MTU clamp if packets actually traverse one; SMTP's
+ALG-detection only means something against a real inspection device in the
+path; loss/jitter is only informative between hosts a real link separates.
+A container bridge would make every one of these pass trivially and prove
+nothing.
+
+Docker still has a narrow, deliberate role: the `golden-image-verifier` agent
+uses an Alpine container as a fast proxy for real `apk` dependency
+resolution and real daemon startup/RSS when reviewing `build-template.sh`
+changes — and says so explicitly every time, because that's *all* it proves.
+It never verifies OpenRC service lifecycle, VMware guestinfo, or any
+multi-host behavior, for the same reason a container can't stand in for the
+network this project tests.
+
+For fast local iteration without VMs at all — hub/dashboard work, or trying
+out a node-script change — see [`dev/README.md`](dev/README.md). That
+toolkit is upfront about the same trade-off in the other direction: it runs
+the real scripts against a real hub, but every network client they shell out
+to is shimmed, so it's for exercising *logic*, not for anything resembling
+real network conditions.
+
 ## Running the hub locally
 
 ```sh
@@ -131,3 +179,5 @@ skips both. Ports below 1024 need root, hence `HUB_SYSLOG_PORT` above here.
 | [`docs/BUILD_GUIDE.md`](docs/BUILD_GUIDE.md) | Step-by-step detail for each stage |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Current state, recent changes, open items |
 | [`docs/TOPOLOGY.md`](docs/TOPOLOGY.md) | System diagram — hub, nodes, and the network between them |
+| [`dev/README.md`](dev/README.md) | Local hub + simulated mesh for coding sessions — no VMs |
+| [`deploy/README.md`](deploy/README.md) | PowerCLI script to deploy a hub + N nodes from existing templates |

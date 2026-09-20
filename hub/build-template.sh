@@ -220,6 +220,12 @@ HUB_HEALTH_SERVICES=lab-tester-hub,chronyd,dropbear,open-vm-tools,lldpd
 
 # Timeout for each rc-service check, in seconds.
 HUB_HEALTH_SERVICE_TIMEOUT_S=3
+
+# --- Traceroute path-change detection ---------------------------------
+# Set false to stop logging a hub-authored row to syslog when a traceroute's
+# hop path changes between samples. Detection itself always runs; this only
+# gates whether a change gets written.
+HUB_PATH_CHANGE_ENABLED=true
 ENVEOF
 
 # -------------------------------------------------------------------

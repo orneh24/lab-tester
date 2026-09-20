@@ -1,0 +1,13 @@
+#!/bin/sh
+# Dev shim so one workstation can simulate several distinct lab-tester
+# nodes: run-node-cycle.sh sets DEV_HOSTNAME per invocation. Falls back to
+# the real `hostname` binary (found outside this shim directory, so it
+# can't call itself) when unset.
+if [ -n "${DEV_HOSTNAME:-}" ]; then
+    printf '%s\n' "$DEV_HOSTNAME"
+    exit 0
+fi
+for real in /usr/bin/hostname /bin/hostname; do
+    [ -x "$real" ] && exec "$real" "$@"
+done
+echo dev-node

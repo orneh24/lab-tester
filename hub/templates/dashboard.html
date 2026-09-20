@@ -43,6 +43,11 @@ a:hover { text-decoration: underline; }
     align-items: center;
     justify-content: space-between;
 }
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
 .header h1 {
     font-size: 16px;
     font-weight: 600;
@@ -132,6 +137,34 @@ a:hover { text-decoration: underline; }
     cursor: pointer;
 }
 .btn-small:hover { color: var(--text); border-color: var(--blue); }
+
+.btn-nav {
+    background: var(--bg-hover);
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 4px;
+    text-decoration: none;
+}
+.btn-nav:hover { background: var(--cyan); color: var(--bg); text-decoration: none; }
+
+/* The current page's own nav button: same shape as .btn-nav, permanently in
+   its "active" state and not a link — it marks where you are, not somewhere
+   you can go. */
+.btn-nav-current {
+    background: var(--cyan);
+    border: 1px solid var(--cyan);
+    color: var(--bg);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: default;
+}
 
 .empty-hint {
     color: var(--text-dim);
@@ -225,6 +258,10 @@ a:hover { text-decoration: underline; }
 .indicator.pass { background: var(--green); }
 .indicator.fail { background: var(--red); }
 .indicator.none { background: var(--gray); color: var(--text-dim); }
+/* A detected traceroute path change is orthogonal to pass/fail, so this
+   composes onto pass/fail/none as an inset highlight rather than replacing
+   the background color. */
+.indicator.changed { box-shadow: inset 0 0 0 2px var(--yellow); }
 .indicator-label { font-size: 8px; letter-spacing: 0; }
 
 .th-sub {
@@ -298,6 +335,8 @@ a:hover { text-decoration: underline; }
 }
 .ep-table tr:hover td { background: var(--bg-hover); }
 .ep-table .stale td { color: var(--yellow); }
+.ep-table td.wrap { white-space: normal; word-break: break-word; }
+.ep-table tr.clickable { cursor: pointer; }
 .ep-table .group-badge {
     display: inline-block;
     background: #1a2332;
@@ -484,7 +523,11 @@ a:hover { text-decoration: underline; }
 <body>
 
 <div class="header">
-    <h1>LAB CONNECTIVITY TESTER</h1>
+    <div class="header-left">
+        <h1>LAB CONNECTIVITY TESTER</h1>
+        <span class="btn-nav-current">Dashboard</span>
+        <a href="/syslog" class="btn-nav">Syslog</a>
+    </div>
     <div class="status">
         <span class="dot"></span>
         <span id="refresh-status">Auto-refresh: 30s</span>
@@ -519,6 +562,40 @@ a:hover { text-decoration: underline; }
                     <thead><tr><th class="origin"></th></tr></thead>
                     <tbody></tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- Recent changes: the matrix only ever shows the current state, so
+             a flap that already recovered, or a target that just went fully
+             dark, is invisible unless you happened to be watching. This is a
+             log of transitions (pass<->fail, and traceroute path changes),
+             not raw results — a steady-state failure that hasn't changed
+             produces nothing here on purpose. -->
+        <div class="section" id="changes-section">
+            <div class="section-header"><span>Recent Changes</span></div>
+            <div class="section-body">
+                <table class="ep-table" id="changes-table">
+                    <thead><tr><th>Time</th><th>Pair</th><th>Change</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="empty-hint" id="changes-empty">No changes in the last hour.</div>
+            </div>
+        </div>
+
+        <!-- Compressed syslog feed — the last few messages, so a device event
+             is visible without leaving the dashboard. Full filtering/search
+             stays on /syslog; this is a preview, not a replacement. -->
+        <div class="section" id="syslog-preview-section">
+            <div class="section-header">
+                <span>Recent Syslog</span>
+                <span class="hdr-actions"><a href="/syslog" class="btn-small">View all &rarr;</a></span>
+            </div>
+            <div class="section-body">
+                <table class="ep-table" id="syslog-preview-table">
+                    <thead><tr><th>Time</th><th>Source</th><th>Sev</th><th>Message</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="empty-hint" id="syslog-preview-empty">No syslog messages.</div>
             </div>
         </div>
 
@@ -649,7 +726,22 @@ a:hover { text-decoration: underline; }
     var endpoints = [];
     var targets = [];
     var resultsData = [];
+    var pathChanges = [];
+    // key: src|dst -> newest detected traceroute path change. Module scope
+    // (not passed as a parameter, unlike buildLookup's map) because
+    // renderIndicators() is called for both the mesh matrix and the
+    // static-targets matrix, so one change marks both correctly.
+    var pathChangeLookup = {};
     var selectedPair = null; // {source, target}
+
+    // Wider-than-the-matrix history, fetched separately, purely to detect
+    // transitions for the Recent Changes panel — see computeRecentChanges().
+    // Kept independent of resultsData/pathChanges above so the matrix
+    // marker's own tighter, already-documented 10-minute self-clear window
+    // is untouched by this.
+    var changeHistoryResults = [];
+    var changeHistoryPathChanges = [];
+    var recentSyslog = [];
 
     // ---------------------------------------------------------------
     // Fetching
@@ -662,17 +754,35 @@ a:hover { text-decoration: underline; }
         Promise.all([
             fetchJSON("/endpoints"),
             fetchJSON("/api/results?minutes=10"),
-            fetchJSON("/targets")
+            fetchJSON("/targets"),
+            // Same window as /api/results, so a marker can never outlive the
+            // cell it annotates and self-clears after ~2 traceroute cycles.
+            fetchJSON("/api/path-changes?minutes=10"),
+            // Wider window, for the Recent Changes panel only — see
+            // computeRecentChanges(). 1 hour is enough to usually find 15
+            // real transitions in an active lab without being an expensive
+            // fetch; if a lab is quieter than that the panel honestly shows
+            // fewer than 15 rather than reaching further back to pad the count.
+            fetchJSON("/api/results?minutes=60"),
+            fetchJSON("/api/path-changes?minutes=60"),
+            fetchJSON("/api/syslog?minutes=1440&limit=10")
         ]).then(function(arr) {
             endpoints = arr[0];
             resultsData = arr[1];
             targets = arr[2];
+            pathChanges = arr[3];
+            changeHistoryResults = arr[4];
+            changeHistoryPathChanges = arr[5];
+            recentSyslog = arr[6];
+            pathChangeLookup = pathChangeMap();
             renderLegend();
             renderMatrix();
             renderTargets();
             renderDNS();
             renderEndpoints();
             renderHealth();
+            renderRecentChanges();
+            renderRecentSyslog();
             if (selectedPair) loadDetail(selectedPair.source, selectedPair.target);
             document.getElementById("last-update").textContent = "Updated: " + new Date().toLocaleTimeString();
             document.getElementById("ep-count").textContent = endpoints.length + " endpoint" + (endpoints.length !== 1 ? "s" : "");
@@ -873,6 +983,158 @@ a:hover { text-decoration: underline; }
         return map;
     }
 
+    function pathChangeMap() {
+        // key: source|target -> newest detected path change
+        var map = {};
+        // /api/path-changes is sorted newest first, so first hit is latest.
+        for (var i = 0; i < pathChanges.length; i++) {
+            var c = pathChanges[i];
+            var key = c.source + "|" + c.target;
+            if (!map[key]) map[key] = c;
+        }
+        return map;
+    }
+
+    // ---------------------------------------------------------------
+    // Recent Changes — a log of TRANSITIONS, not raw results. A target that
+    // has been down the whole window produces nothing here on purpose; the
+    // matrix already shows steady-state failure. Two change kinds:
+    //   "flip" — a (source, target, test_type) pass/fail toggled
+    //   "path" — traceroute's hop path changed (hub-detected, see
+    //            pathchange.py); orthogonal to pass/fail, since a rerouted
+    //            trace can still succeed
+    // Only consecutive samples that were BOTH actually fetched can be
+    // compared, so the oldest sample in the window is never itself reported
+    // as a change — same honest limitation the hub's own path-change
+    // detection has for a pair's very first stored sample.
+    // ---------------------------------------------------------------
+    function computeRecentChanges(rows, pathRows) {
+        var byPairType = {};   // "src|dst|type" -> rows, chronological
+        var batchTypes = {};   // "src|dst|received_at" -> {type: true}
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            var ptKey = r.source + "|" + r.target_hostname + "|" + r.test_type;
+            (byPairType[ptKey] = byPairType[ptKey] || []).push(r);
+            var bKey = r.source + "|" + r.target_hostname + "|" + r.received_at;
+            (batchTypes[bKey] = batchTypes[bKey] || {})[r.test_type] = true;
+        }
+
+        var downFlipsByBatch = {}; // "src|dst|received_at" -> [flip, ...]
+        var changes = [];
+        Object.keys(byPairType).forEach(function(key) {
+            var arr = byPairType[key];
+            arr.sort(function(a, b) { return parseTs(a.received_at) - parseTs(b.received_at); });
+            for (var i = 1; i < arr.length; i++) {
+                if (!!arr[i].success === !!arr[i - 1].success) continue;
+                var flip = {
+                    received_at: arr[i].received_at, source: arr[i].source,
+                    target: arr[i].target_hostname, test_type: arr[i].test_type,
+                    to: !!arr[i].success
+                };
+                if (!flip.to) {
+                    var bKey2 = flip.source + "|" + flip.target + "|" + flip.received_at;
+                    (downFlipsByBatch[bKey2] = downFlipsByBatch[bKey2] || []).push(flip);
+                } else {
+                    changes.push(flip);
+                }
+            }
+        });
+
+        // A batch where every test type that ran also just flipped to FAIL
+        // is a target going fully dark — collapse it into one row instead of
+        // N near-duplicate ones for the same moment. A single-test flip (only
+        // one type ran, e.g. a static target declaring just pmtu) is still
+        // reported as an ordinary flip, not a collapse — "ALL" only means
+        // something once there is more than one test to agree.
+        Object.keys(downFlipsByBatch).forEach(function(bKey) {
+            var flips = downFlipsByBatch[bKey];
+            var total = Object.keys(batchTypes[bKey] || {}).length;
+            if (flips.length >= 2 && flips.length === total) {
+                changes.push({
+                    received_at: flips[0].received_at, source: flips[0].source,
+                    target: flips[0].target, kind: "all-down", count: flips.length
+                });
+            } else {
+                changes = changes.concat(flips);
+            }
+        });
+
+        for (var p = 0; p < pathRows.length; p++) {
+            var pc = pathRows[p];
+            changes.push({
+                received_at: pc.received_at, source: pc.source, target: pc.target,
+                kind: "path", detail: pc.detail
+            });
+        }
+
+        changes.sort(function(a, b) { return parseTs(b.received_at) - parseTs(a.received_at); });
+        return changes.slice(0, 15);
+    }
+
+    function changeText(c) {
+        if (c.kind === "all-down") {
+            return "<span style='color:var(--red);font-weight:600'>ALL tests FAILED</span> (" + c.count + " tests)";
+        }
+        if (c.kind === "path") {
+            return "<span style='color:var(--yellow)'>Traceroute path changed:</span> " + esc(c.detail);
+        }
+        var name = TYPE_NAMES[c.test_type] || c.test_type;
+        return esc(name) + ": " + (c.to
+            ? "<span style='color:var(--red)'>FAIL</span> &rarr; <span style='color:var(--green)'>PASS</span>"
+            : "<span style='color:var(--green)'>PASS</span> &rarr; <span style='color:var(--red)'>FAIL</span>");
+    }
+
+    function renderRecentChanges() {
+        var changes = computeRecentChanges(changeHistoryResults, changeHistoryPathChanges);
+        var tbody = document.querySelector("#changes-table tbody");
+        var html = "";
+        for (var i = 0; i < changes.length; i++) {
+            var c = changes[i];
+            html += "<tr class='clickable' data-src='" + esc(c.source) + "' data-dst='" + esc(c.target) + "'>";
+            html += "<td title='" + esc(c.received_at) + "'>" + esc(formatWhen(c.received_at)) + "</td>";
+            html += "<td>" + esc(c.source) + " &rarr; " + esc(c.target) + "</td>";
+            html += "<td class='wrap'>" + changeText(c) + "</td>";
+            html += "</tr>";
+        }
+        tbody.innerHTML = html;
+        document.getElementById("changes-empty").style.display = changes.length ? "none" : "";
+        var rows = tbody.querySelectorAll("tr.clickable");
+        for (var r = 0; r < rows.length; r++) {
+            rows[r].addEventListener("click", function() {
+                selectedPair = {source: this.getAttribute("data-src"), target: this.getAttribute("data-dst")};
+                loadDetail(selectedPair.source, selectedPair.target);
+            });
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Recent Syslog — a compressed preview of /syslog, same data, no
+    // filters. "View all" links to the full page for anything more.
+    // ---------------------------------------------------------------
+    function sevColor(sev) {
+        if (sev === null || sev === undefined) return "var(--text-dim)";
+        if (sev <= 3) return "var(--red)";
+        if (sev === 4) return "var(--yellow)";
+        return "var(--green)";
+    }
+
+    function renderRecentSyslog() {
+        var tbody = document.querySelector("#syslog-preview-table tbody");
+        var html = "";
+        for (var i = 0; i < recentSyslog.length; i++) {
+            var m = recentSyslog[i];
+            var sev = (m.severity === null || m.severity === undefined) ? "?" : m.severity;
+            html += "<tr>";
+            html += "<td title='" + esc(m.received_at) + "'>" + esc(formatWhen(m.received_at)) + "</td>";
+            html += "<td>" + esc(m.host || m.source_ip) + "</td>";
+            html += "<td style='color:" + sevColor(m.severity) + "'>" + esc(sev) + "</td>";
+            html += "<td class='wrap'>" + esc(m.message) + "</td>";
+            html += "</tr>";
+        }
+        tbody.innerHTML = html;
+        document.getElementById("syslog-preview-empty").style.display = recentSyslog.length ? "none" : "";
+    }
+
     function renderMatrix() {
         var table = document.getElementById("matrix");
         var thead = table.querySelector("thead");
@@ -935,6 +1197,15 @@ a:hover { text-decoration: underline; }
             var res = lookup[src + "|" + dst + "|" + types[t]];
             var cls = res ? (res.success ? "pass" : "fail") : "none";
             var tip = TYPE_NAMES[types[t]] + (res ? (res.success ? " — pass" : " — FAIL") : " — no data");
+            // A path change is orthogonal to pass/fail — composed onto the
+            // traceroute cell's class rather than replacing it.
+            if (types[t] === "traceroute") {
+                var change = pathChangeLookup[src + "|" + dst];
+                if (change) {
+                    cls += " changed";
+                    tip += " — path changed: " + change.detail;
+                }
+            }
             html += "<div class='indicator " + cls + "' title='" + esc(tip) + "'>" + TYPE_LABELS[types[t]] + "</div>";
         }
         return html + "</div>";
@@ -1219,6 +1490,19 @@ a:hover { text-decoration: underline; }
                     }
                 }
                 html += "</div>";
+
+                // Path change, traceroute only — same correlation pattern as
+                // every other syslog link on this panel, not a new one.
+                if (type === "traceroute") {
+                    var pathChange = pathChangeLookup[src + "|" + dst];
+                    if (pathChange) {
+                        html += "<div class='detail-test-meta' style='color:var(--yellow)'>Path changed: " +
+                                esc(pathChange.detail) + " &mdash; <a href='" +
+                                syslogUrl(pathChange.received_at) + "' target='_blank' rel='noopener'>syslog &plusmn;" +
+                                SYSLOG_PIN_MINUTES + " min</a></div>";
+                    }
+                }
+
                 html += "<div class='detail-test-output' id='output-" + type + "'>" + esc(latest.output || "(no output)") + "</div>";
             }
 

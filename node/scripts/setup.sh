@@ -249,12 +249,17 @@ fi
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ "$SRC_DIR" != "$SCRIPT_DIR" ]; then
     log "Installing scripts to $SCRIPT_DIR"
-    cp -f "$SRC_DIR/register.sh"   "$SCRIPT_DIR/register.sh"
-    cp -f "$SRC_DIR/test-cycle.sh" "$SCRIPT_DIR/test-cycle.sh"
+    cp -f "$SRC_DIR/register.sh"    "$SCRIPT_DIR/register.sh"
+    cp -f "$SRC_DIR/test-cycle.sh"  "$SCRIPT_DIR/test-cycle.sh"
+    cp -f "$SRC_DIR/test-status.sh" "$SCRIPT_DIR/test-status.sh"
 else
     log "Scripts already in place at $SCRIPT_DIR"
 fi
-chmod +x "$SCRIPT_DIR/register.sh" "$SCRIPT_DIR/test-cycle.sh"
+chmod +x "$SCRIPT_DIR/register.sh" "$SCRIPT_DIR/test-cycle.sh" "$SCRIPT_DIR/test-status.sh"
+# On PATH by name, same as node-setup.sh. Re-linked unconditionally (not
+# just on first install) so a node built before test-status.sh existed picks
+# it up the moment this script is re-run.
+ln -sf "$SCRIPT_DIR/test-status.sh" /usr/local/bin/test-status
 
 # -------------------------------------------------------------------
 # Install crontab
@@ -315,6 +320,7 @@ if [ -d "${SRC_DIR}/../services" ]; then
     cp -f "${SRC_DIR}/../services/smtpd.conf"  /etc/smtpd/smtpd.conf 2>/dev/null || true
     cp -f "${SRC_DIR}/../services/smtpd.initd" /etc/init.d/lab-smtpd 2>/dev/null || true
     chmod +x /etc/init.d/iperf3 /etc/init.d/lab-httpd /etc/init.d/lab-smbd /etc/init.d/lab-smtpd 2>/dev/null || true
+    cp -f "${SRC_DIR}/../services/login-status.sh" /etc/profile.d/lab-tester-status.sh 2>/dev/null || true
 fi
 
 # -------------------------------------------------------------------

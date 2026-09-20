@@ -1,0 +1,9 @@
+#!/bin/sh
+# Dev shim for the hand-rolled SMTP conversation `nc -w 5 TARGET PORT` reads.
+# run_smtp_test only checks the banner (first line, "220...") and that a
+# "250"-prefixed line follows somewhere — it never reads past what it pipes
+# in, so a fixed healthy banner + EHLO capability list is enough. Drain
+# stdin first so the writer side of the pipe (run_smtp_test's generator)
+# never sees SIGPIPE before it finishes.
+cat >/dev/null
+printf '220 dev-smtp.local ESMTP\r\n250-dev-smtp.local Hello\r\n250-STARTTLS\r\n250 HELP\r\n'

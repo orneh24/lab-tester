@@ -35,6 +35,91 @@ ENABLE_SMTP="${ENABLE_SMTP:-false}"
 MY_HOSTNAME=$(hostname)
 SSH_KEY="${SSH_KEY:-/etc/lab-tester/id_lab}"
 
+# Same inline-default reasoning as ENABLE_SMB/ENABLE_SMTP above: no
+# already-deployed config has these lines. Console output defaults ON — the
+# whole point is that a clone shows its own results on its vSphere console
+# with zero configuration; CONSOLE_OUTPUT=false opts a node out.
+CONSOLE_OUTPUT="${CONSOLE_OUTPUT:-true}"
+CONSOLE_DEVICE="${CONSOLE_DEVICE:-/dev/console}"
+SNAPSHOT_FILE="${SNAPSHOT_FILE:-/run/lab-tester/last-cycle.txt}"
+
+# -------------------------------------------------------------------
+# Console / test-status output.
+#
+# The hub dashboard is the source of truth, but an operator sitting at a
+# node's own console (or SSH'd into it) has no way to see whether THIS
+# node's tests are passing without opening it. Every cycle's summary is
+# rendered once and fanned out to three places: stdout (which cron already
+# redirects to test-cycle.log), the snapshot file test-status.sh reads, and
+# the console device itself, so all three can never disagree about what
+# happened.
+#
+# snapshot_note() is the lightweight form, used on early-exit paths (no
+# endpoints, hub unreachable, lock held) so test-status and the login banner
+# show *why* nothing ran rather than silently keeping a stale green table
+# from an hour ago.
+# -------------------------------------------------------------------
+snapshot_note() {
+    _line="$(date -u '+%Y-%m-%dT%H:%M:%SZ') ${MY_HOSTNAME} $1"
+    printf '%s\n' "$_line"
+    if [ "$CONSOLE_OUTPUT" = "true" ] && [ -w "$CONSOLE_DEVICE" ] 2>/dev/null; then
+        printf '%s\n' "$_line" > "$CONSOLE_DEVICE" 2>/dev/null || true
+    fi
+    mkdir -p "$(dirname "$SNAPSHOT_FILE")" 2>/dev/null || true
+    _tmp="${SNAPSHOT_FILE}.$$"
+    if printf '%s\n' "$_line" > "$_tmp" 2>/dev/null; then
+        mv -f "$_tmp" "$SNAPSHOT_FILE" 2>/dev/null || true
+    fi
+}
+
+# Full per-cycle table. Written via a temp file + mv so a concurrent
+# test-status read (or the login banner) never sees a half-written table.
+render_summary() {
+    _out="$1"
+    printf '%s\n' "$_out"
+    if [ "$CONSOLE_OUTPUT" = "true" ] && [ -w "$CONSOLE_DEVICE" ] 2>/dev/null; then
+        printf '%s\n' "$_out" > "$CONSOLE_DEVICE" 2>/dev/null || true
+    fi
+    mkdir -p "$(dirname "$SNAPSHOT_FILE")" 2>/dev/null || true
+    _tmp="${SNAPSHOT_FILE}.$$"
+    if printf '%s\n' "$_out" > "$_tmp" 2>/dev/null; then
+        mv -f "$_tmp" "$SNAPSHOT_FILE" 2>/dev/null || true
+    fi
+}
+
+# Render one result JSON blob as a fixed-width table cell.
+#   kind=bool -> OK / FAIL / - (json empty, i.e. test didn't run)
+#   kind=loss -> loss percentage / - (mirrors run_loss_test's philosophy:
+#                loss is data, not a pass/fail gate, so the cell shows the
+#                number rather than collapsing it to OK/FAIL)
+result_cell() {
+    if [ -z "$1" ]; then
+        printf -- '-'
+        return 0
+    fi
+    if [ "$2" = "loss" ]; then
+        _pct=$(printf '%s' "$1" | jq -r '.output // empty' | sed -n 's/^Loss: \([0-9]*\)%.*/\1/p')
+        if [ -n "$_pct" ]; then printf '%s%%' "$_pct"; else printf -- '-'; fi
+    else
+        if [ "$(printf '%s' "$1" | jq -r '.success')" = "true" ]; then
+            printf 'OK'
+        else
+            printf 'FAIL'
+        fi
+    fi
+}
+
+append_row() {
+    [ -z "$1" ] && return 0
+    if [ -n "$ROWS" ]; then
+        ROWS="${ROWS}
+$1"
+    else
+        ROWS="$1"
+    fi
+}
+ROWS=""
+
 # -------------------------------------------------------------------
 # Serialise test cycles.
 #
@@ -49,9 +134,10 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     if [ -d "$LOCK_DIR" ] && [ -z "$(find "$LOCK_DIR" -maxdepth 0 -mmin -10 2>/dev/null)" ]; then
         log "Removing stale lock"
         rmdir "$LOCK_DIR" 2>/dev/null || true
-        mkdir "$LOCK_DIR" 2>/dev/null || { log "Could not acquire lock, skipping"; exit 0; }
+        mkdir "$LOCK_DIR" 2>/dev/null || { log "Could not acquire lock, skipping"; snapshot_note "SKIPPED: could not acquire lock"; exit 0; }
     else
         log "Previous cycle still running, skipping this run"
+        snapshot_note "SKIPPED: previous cycle still running"
         exit 0
     fi
 fi
@@ -66,12 +152,14 @@ ENDPOINTS=$(curl -s --connect-timeout 5 --max-time 10 "${HUB_URL}/endpoints" 2>/
 
 if [ -z "$ENDPOINTS" ]; then
     log "ERROR: could not fetch endpoints from hub"
+    snapshot_note "ERROR: could not fetch endpoints from hub (${HUB_URL})"
     exit 1
 fi
 
 # Validate JSON
 if ! printf '%s' "$ENDPOINTS" | jq empty 2>/dev/null; then
     log "ERROR: invalid JSON from /endpoints"
+    snapshot_note "ERROR: invalid JSON from ${HUB_URL}/endpoints"
     exit 1
 fi
 
@@ -622,6 +710,10 @@ while [ "$i" -lt "$ENDPOINT_COUNT" ]; do
 
     log "Testing $EP_HOSTNAME ($EP_IP)"
 
+    # Reset per-target so a target that skips traceroute this cycle doesn't
+    # inherit the previous target's TRACE_RESULT in its console row.
+    TRACE_RESULT=""
+
     # Each test is isolated so one failure cannot prevent the others running.
 
     log "  HTTP test -> $EP_IP"
@@ -652,6 +744,17 @@ while [ "$i" -lt "$ENDPOINT_COUNT" ]; do
         TRACE_RESULT=$(run_traceroute_test "$EP_IP" "$EP_HOSTNAME") || true
         append_result "$TRACE_RESULT"
     fi
+
+    # Console/test-status row for this target. Built from the same result
+    # variables just posted to the hub, not a second parse of $RESULTS, so
+    # the console table can never drift from what the dashboard shows.
+    append_row "$(printf '%-14s %-15s %-5s %-5s %-5s %-6s %-3s' \
+        "$EP_HOSTNAME" "$EP_IP" \
+        "$(result_cell "$HTTP_RESULT" bool)" \
+        "$(result_cell "$SSH_RESULT" bool)" \
+        "$(result_cell "$PMTU_RESULT" bool)" \
+        "$(result_cell "$LOSS_RESULT" loss)" \
+        "$([ -n "$TRACE_RESULT" ] && printf '*' || printf -- '-')")"
 
     # iperf3 (optional). A skipped run returns nothing, and appending that
     # blindly would leave a trailing comma and produce invalid JSON.
@@ -695,23 +798,27 @@ while [ "$j" -lt "$TARGET_COUNT" ]; do
 
     log "Testing static target $TG_NAME ($TG_IP) [$TG_TESTS]"
 
+    # Reset per-target so console-row cells reflect only tests this target
+    # actually declares, not whatever a previous target left behind.
+    TG_HTTP=""; TG_SSH=""; TG_PMTU=""; TG_LOSS=""; TG_TRACE=""
+
     case ",$TG_TESTS," in
         *,http,*)
-            R=$(run_http_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
+            TG_HTTP=$(run_http_test "$TG_IP" "$TG_NAME") || true; append_result "$TG_HTTP" ;;
     esac
     case ",$TG_TESTS," in
         *,ssh,*)
-            R=$(run_ssh_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
+            TG_SSH=$(run_ssh_test "$TG_IP" "$TG_NAME") || true; append_result "$TG_SSH" ;;
     esac
     case ",$TG_TESTS," in
         *,pmtu,*)
-            R=$(run_pmtu_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
+            TG_PMTU=$(run_pmtu_test "$TG_IP" "$TG_NAME") || true; append_result "$TG_PMTU" ;;
     esac
     case ",$TG_TESTS," in
         # A device loopback is a legitimate loss/jitter target, same as pmtu
         # and traceroute above — no ENABLE_ gate, always available to declare.
         *,loss,*)
-            R=$(run_loss_test "$TG_IP" "$TG_NAME") || true; append_result "$R" ;;
+            TG_LOSS=$(run_loss_test "$TG_IP" "$TG_NAME") || true; append_result "$TG_LOSS" ;;
     esac
     case ",$TG_TESTS," in
         *,dns,*)
@@ -740,9 +847,19 @@ while [ "$j" -lt "$TARGET_COUNT" ]; do
     case ",$TG_TESTS," in
         *,traceroute,*)
             if [ "$TRACE_THIS_CYCLE" = "yes" ]; then
-                R=$(run_traceroute_test "$TG_IP" "$TG_NAME") || true; append_result "$R"
+                TG_TRACE=$(run_traceroute_test "$TG_IP" "$TG_NAME") || true; append_result "$TG_TRACE"
             fi ;;
     esac
+
+    # Same console row as the mesh loop above — cells a target doesn't
+    # declare naturally stay "-" since TG_* was reset empty for this target.
+    append_row "$(printf '%-14s %-15s %-5s %-5s %-5s %-6s %-3s' \
+        "$TG_NAME" "$TG_IP" \
+        "$(result_cell "$TG_HTTP" bool)" \
+        "$(result_cell "$TG_SSH" bool)" \
+        "$(result_cell "$TG_PMTU" bool)" \
+        "$(result_cell "$TG_LOSS" loss)" \
+        "$([ -n "$TG_TRACE" ] && printf '*' || printf -- '-')")"
 
     TESTED=$((TESTED + 1))
     j=$((j + 1))
@@ -767,6 +884,7 @@ log "Tested $TESTED targets"
 # produced a static-target or DNS result worth submitting.
 if [ -z "$RESULTS" ]; then
     log "No results produced, skipping submission"
+    snapshot_note "no results produced this cycle"
     exit 0
 fi
 
@@ -780,9 +898,31 @@ HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
     -d "$PAYLOAD" \
     "${HUB_URL}/results" 2>/dev/null) || HTTP_CODE="000"
 
+SUBMIT_OK="no"
 if [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 300 ] 2>/dev/null; then
     log "Results submitted successfully (HTTP $HTTP_CODE)"
+    SUBMIT_OK="yes"
 else
     log "ERROR: failed to submit results (HTTP $HTTP_CODE)"
-    exit 1
 fi
+
+# -------------------------------------------------------------------
+# Console / test-status summary for this cycle. Rendered even on a failed
+# submission — a node that cannot reach the hub is exactly when console
+# visibility matters most.
+#
+# OK/FAIL counts come from the actual submitted payload, not a recount of
+# the console rows above — smb/smtp/iperf3/dns results post to the hub the
+# same as always but don't get their own column in the compact table, so
+# counting from $RESULTS keeps the footer honest about everything that ran.
+# -------------------------------------------------------------------
+OK_COUNT=$(printf '%s' "$PAYLOAD" | jq '[.results[] | select(.success == true)] | length')
+FAIL_COUNT=$(printf '%s' "$PAYLOAD" | jq '[.results[] | select(.success == false)] | length')
+
+SUMMARY_TITLE=$(printf '%s   %s   %d targets' "$MY_HOSTNAME" "$(date -u '+%Y-%m-%d %H:%M:%SZ')" "$TESTED")
+SUMMARY_HEADER=$(printf '%-14s %-15s %-5s %-5s %-5s %-6s %-3s' "TARGET" "IP" "H" "S" "M" "L" "T")
+SUMMARY_FOOTER=$(printf '%s ok / %s fail   ->  hub %s' "$OK_COUNT" "$FAIL_COUNT" "$HTTP_CODE")
+
+render_summary "$(printf '%s\n%s\n%s\n%s' "$SUMMARY_TITLE" "$SUMMARY_HEADER" "$ROWS" "$SUMMARY_FOOTER")"
+
+[ "$SUBMIT_OK" = "yes" ] || exit 1

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Dev shim for `smbclient -N //TARGET/SHARE -t 12 -c "get FILE /dev/null"`.
+# run_smb_test greps for "getting file ... (RATE/sec)".
+echo "getting file probe.bin of size 8388608 as /dev/null (812.3 KiloBytes/sec) (average 812.3 KiloBytes/sec)"
