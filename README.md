@@ -38,7 +38,7 @@ printf 'lab-tester-template\n' > /etc/hostname
 
 # Per node clone: set a unique hostname, then either let node-setup.sh
 # prompt at login, or run it (or register.sh) by hand
-register.sh
+/usr/local/bin/lab-tester/register.sh
 ```
 
 `install.sh` (interactive, no `-y`) asks which role a fresh base VM becomes

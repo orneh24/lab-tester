@@ -53,7 +53,7 @@ printf 'lab-tester-template\n' > /etc/hostname
 
 # 4. Clone the node template once per subnet
 #    (on each clone) set a unique hostname, then:
-register.sh
+/usr/local/bin/lab-tester/register.sh
 # confirm it appears in http://<hub-ip>/endpoints
 ```
 

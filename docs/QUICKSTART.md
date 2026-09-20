@@ -33,7 +33,7 @@ printf 'lab-tester-template\n' > /etc/hostname
 
 # Per node clone: set a unique hostname, then either let node-setup.sh
 # prompt at the next login, or run it (or register.sh) by hand
-register.sh
+/usr/local/bin/lab-tester/register.sh
 ```
 
 `install.sh` (repo root, run interactively with no `-y`) asks whether a
