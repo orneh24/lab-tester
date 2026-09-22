@@ -79,7 +79,7 @@ grep -n "def iso\|def result_row" hub/app/app.py
 grep -n "iso(\|result_row(" hub/app/app.py
 ```
 
-Pass: the first grep matches only `api_syslog_sources` (`app.py:569`), whose
+Pass: the first grep matches only `api_syslog_sources` (`app.py:702`), whose
 `SELECT` returns `name, count` and carries no timestamp — that one hit is
 expected and is not a finding. Any *other* hit is: a route that selects a stored
 timestamp must route it through `iso()` or `result_row()` before returning. Read each hit of the

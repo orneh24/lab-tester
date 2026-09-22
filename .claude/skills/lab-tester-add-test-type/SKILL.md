@@ -165,7 +165,7 @@ worth guarding permanently) · `.claude/agents/test-result-analyst.md`
 (sample-rate section, coarse-timing note, a trap warning if success
 semantics are non-obvious) · `.claude/agents/lab-tester-diagnostician.md`
 (tests-per-pair list, serves list, port list) · the three
-`skills/lab-tester-*/SKILL.md` files (config vars/services lists,
+`.claude/skills/lab-tester-*/SKILL.md` files (config vars/services lists,
 `COARSE_TIMING` enumeration, a troubleshooting subsection if the test has a
 "can pass while degraded" trap).
 
