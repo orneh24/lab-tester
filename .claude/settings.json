@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; m=\"$d/.claude/.drift-checked\"; if [ -f \"$m\" ]; then n=$(find \"$d/CLAUDE.md\" \"$d/docs\" \"$d/skills\" \"$d/.claude/agents\" -type f -newer \"$m\" 2>/dev/null | head -1); else n=$(find \"$d/CLAUDE.md\" \"$d/docs\" \"$d/skills\" \"$d/.claude/agents\" -type f 2>/dev/null | head -1); fi; if [ -n \"$n\" ]; then printf \"%s\" \"{\\\"systemMessage\\\":\\\"Docs or agent definitions changed since the last recorded drift check. Consider running the drift-checker agent; then run: touch .claude/.drift-checked\\\"}\"; fi",
+            "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; m=\"$d/.claude/.drift-checked\"; if [ -f \"$m\" ]; then n=$(find \"$d/CLAUDE.md\" \"$d/docs\" \"$d/.claude/skills\" \"$d/.claude/agents\" -type f -newer \"$m\" 2>/dev/null | head -1); else n=$(find \"$d/CLAUDE.md\" \"$d/docs\" \"$d/.claude/skills\" \"$d/.claude/agents\" -type f 2>/dev/null | head -1); fi; if [ -n \"$n\" ]; then printf \"%s\" \"{\\\"systemMessage\\\":\\\"Docs or agent definitions changed since the last recorded drift check. Consider running the drift-checker agent; then run: touch .claude/.drift-checked\\\"}\"; fi",
             "timeout": 10
           }
         ]

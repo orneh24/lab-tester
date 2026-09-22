@@ -733,11 +733,13 @@ is set. Set it.
 
 ## Skills and agents
 
-4 skills in `skills/` and 7 agents in `.claude/agents/` (a real directory, not
-a junction), following the 2026-09-14 re-scope which removed 9 vendored
+5 skills in `.claude/skills/` and 8 agents in `.claude/agents/` (a real
+directory, not a junction), following the 2026-09-14 re-scope which removed 9 vendored
 generic network-device skills and 3 generic network agents that carried no
 project-specific content. Project-specific skills: `lab-tester-hub-api`,
-`lab-tester-node`, `lab-tester-troubleshooting`, `lab-tester-add-test-type`.
+`lab-tester-node`, `lab-tester-troubleshooting`, `lab-tester-add-test-type`,
+`lab-tester-dev-toolkit`. Claude Code only loads skills from `.claude/skills/`;
+they sat unloaded in a root `skills/` folder until 2026-09-22.
 Project-specific agents:
 
 | Agent | Use |
@@ -749,5 +751,6 @@ Project-specific agents:
 | `golden-image-verifier` | Real-Alpine-container verification of `build-template.sh` changes. |
 | `lab-tester-diagnostician` | Triage when the dashboard looks wrong. |
 | `test-result-analyst` | Interpreting collected results rather than fixing an outage. |
+| `vsphere-deploy-reviewer` | PowerCLI clone scripts — guestinfo keys, unique clone names, power-on ordering. |
 
 Read the relevant skill before changing the code it covers.

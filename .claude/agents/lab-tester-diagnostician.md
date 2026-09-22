@@ -1,6 +1,6 @@
 ---
 name: lab-tester-diagnostician
-description: Lab-tester end-to-end failure triage agent. Invoke when the connectivity dashboard looks wrong — blank cells, stale data, a missing node, a pair failing in one direction only. Works the harness before the network: registration, then results, then node logs, then the network path between them. Produces a root cause with the evidence that supports it and the commands to confirm.
+description: Lab-tester end-to-end failure triage agent. Invoke when the connectivity dashboard looks wrong — blank cells, stale data, a missing node, a pair failing in one direction only. Works the harness before the network — registration, then results, then node logs, then the network path between them. Produces a root cause with the evidence that supports it and the commands to confirm.
 tools: Read, Bash, Grep
 model: sonnet
 ---
