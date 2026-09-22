@@ -627,6 +627,56 @@ the bash running your check:
 grep -nE '\[\[|\blocal\b|<\(|\$RANDOM|\$\{[A-Za-z_]+,,' node/scripts/*.sh
 ```
 
+**ShellCheck** — every tracked shell file, in POSIX `sh` mode (the dialect
+BusyBox ash is closest to). Known false positives are allowlisted by file and
+code, not line number, so they survive edits:
+
+```sh
+SC=$(command -v shellcheck || ls ~/AppData/Local/Microsoft/WinGet/Packages/koalaman.shellcheck_*/shellcheck.exe 2>/dev/null | head -1)
+[ -n "$SC" ] || echo "NOT RUN: shellcheck not found"
+"$SC" -s sh -S warning -f gcc $(git ls-files '*.sh' '*.initd' 'dev/shims/*') | tr -d '\r' |
+while IFS=: read -r f l c rest; do
+    code=${rest##*[}; code=${code%]}
+    case "$f:$code" in
+        */services/*.initd:SC2034) continue ;;
+        */services/login-*.sh:SC1113|*/services/login-*.sh:SC2096) continue ;;
+        hub/run.sh:SC2163) continue ;;
+        *:SC1010) sed -n "${l}p" "$f" | grep -q -- '-M do' && continue ;;
+    esac
+    echo "UNEXPECTED $f:$l $code${rest% \[SC*}"
+done
+```
+
+Pass: silent. Each allowlist entry is a verified false positive:
+- `SC2034` in `.initd` — `name`, `command`, `pidfile` etc. are read by
+  `openrc-run`, not the script.
+- `SC1113`/`SC2096` in `login-*.sh` — sourced from `/etc/profile.d`, so no
+  shebang; ShellCheck misreads the first comment as a broken one.
+- `SC2163` in `hub/run.sh` — `export "$line"` exports whole `KEY=value` lines
+  on purpose.
+- `SC1010` only where the line holds `-M do` — ping's argument, not the
+  keyword. A real missing `;` before `do` elsewhere still fails.
+
+`tr -d '\r'` is load-bearing: the Windows `shellcheck.exe` emits CRLF, which
+leaves `]` on every code and silently breaks the whole allowlist.
+
+**CRLF on disk** — read the bytes. Do not use `git ls-files --eol` (its index
+column shows the committed blob, not the working tree) or `grep $'\r'` (Git
+Bash's grep does not see the CR), and `sh -n` under Git Bash accepts CRLF. On
+2026-09-22 all three said clean while 21 LF-pinned files on disk were CRLF —
+invisible to `git status`, fatal on Alpine if copied from this tree to a VM.
+
+```sh
+python3 -c "
+import subprocess
+fs = subprocess.check_output(['git','ls-files','*.sh','*.initd','*.py','dev/shims/*','node/services/crontab','node/services/*.conf','node/config.sample','hub/requirements.txt'], text=True).split()
+bad = [f for f in fs if b'\r' in open(f,'rb').read()]
+print('\n'.join('CRLF ' + f for f in bad) or 'no CRLF')"
+```
+
+Pass: `no CRLF`. A hit is fixed by deleting the file and `git checkout -- <file>`
+on a clean tree (the blob is LF; `.gitattributes` rewrites it correctly).
+
 **JSON must be validated with a strict parser, not `jq`.** This is the whole
 mechanism behind R9: `jq` accepts leading zeros, the hub's Python parser does
 not, so a `jq`-clean payload can still 400 the entire batch. Use whichever the
@@ -711,7 +761,9 @@ The workstation this usually runs on is Windows with Git Bash. As of
 2026-09-10 the full toolchain is present: `jq` 1.8.2, Python 3.12 with Flask
 and waitress (via `python`/`python3` shims in `~/bin` that point past the
 Microsoft Store stubs), plus `node`, `sqlite3`, `curl`, `sh`, `awk`, `sed` and
-`grep`. `shellcheck` is still absent — the bashism grep stands in for it.
+`grep`. `shellcheck` 0.11.0 was added 2026-09-22 via winget; it may not be on
+the Git Bash PATH, so the ShellCheck block above also looks in the WinGet
+package folder. The bashism grep stays as a second opinion.
 
 Verify rather than assume. `python3 --version` returning a Store message
 ("Python was not found... install from the Microsoft Store") means the shim is
