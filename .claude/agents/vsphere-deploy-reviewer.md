@@ -43,7 +43,7 @@ powered on with the right keys set before it ever boots.
   `guestinfo.meshprobe.subnet` (optional — falls back to the DHCP lease),
   `guestinfo.meshprobe.hostname` (optional — derived as
   `<HOSTNAME_PREFIX>-<group-slug>-<ip>` when unset, IP dots as hyphens,
-  e.g. `test-node-site-a-10-1-1-10`), `guestinfo.meshprobe.dns_server`
+  e.g. `mp-site-a-10-1-1-10`), `guestinfo.meshprobe.dns_server`
   / `guestinfo.meshprobe.dns_query` (optional pair — DNS test only runs when
   `dns_server` is set). Precedence in-guest is guestinfo → environment →
   prompt.
@@ -150,7 +150,7 @@ clean.
 
 A change adds `-NodeGroups @("site-a","site-a","site-b")` support with no
 duplicate check → the derived hostnames would differ by IP, but both
-clones are named `test-node-site-a` in vCenter → the second `New-VM`
+clones are named `mp-site-a` in vCenter → the second `New-VM`
 fails on a duplicate VM name, partway through the run, and the mesh
 comes up one node short. Flag this and require either a duplicate-check
 `throw` before any clone is made, or a unique per-node VM name — and

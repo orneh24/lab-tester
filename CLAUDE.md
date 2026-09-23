@@ -267,7 +267,7 @@ keys set on the VM are read in-guest via `vmware-rpctool "info-get <key>"`:
 | `guestinfo.meshprobe.hub_url` | `http://10.0.0.100` |
 | `guestinfo.meshprobe.group` | `site-a` |
 | `guestinfo.meshprobe.subnet` | `10.1.1.0/24` (optional; derived from the DHCP lease if omitted) |
-| `guestinfo.meshprobe.hostname` | `test-node-site-a` (optional) |
+| `guestinfo.meshprobe.hostname` | `mp-site-a` (optional) |
 | `guestinfo.meshprobe.dns_server` | `10.0.0.53` (optional; unset skips the DNS test) |
 | `guestinfo.meshprobe.dns_query` | `example.com` (optional) |
 
@@ -275,7 +275,7 @@ Precedence in `setup.sh`: **guestinfo → environment → prompt**, except
 `subnet`, which has one extra fallback before the prompt: derived from the
 interface's own DHCP lease (address + prefix already give you the network).
 If hostname is omitted it is derived as `<HOSTNAME_PREFIX>-<group-slug>-<ip>`
-(dots as hyphens, e.g. `test-node-site-a-10-1-1-10`), so two nodes in one
+(dots as hyphens, e.g. `mp-site-a-10-1-1-10`), so two nodes in one
 group never collide (constraint 1).
 `group` is an arbitrary operator-chosen label — it clusters nodes on the
 dashboard and filters syslog by sender; it carries no network-topology

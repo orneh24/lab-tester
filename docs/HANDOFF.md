@@ -46,7 +46,7 @@ and intent only.
 
 **Unique derived node hostnames (2026-09-23).** With no explicit name set,
 `setup.sh` derives `<HOSTNAME_PREFIX>-<group-slug>-<ip>`, dots as hyphens
-(`test-node-site-a-10-1-1-10`) — the full IP, since per-site subnets share
+(`mp-site-a-10-1-1-10`) — the full IP, since per-site subnets share
 last octets. IP detection now runs before the hostname step, using
 `register.sh`'s lookup. `guestinfo.meshprobe.hostname` / `NODE_HOSTNAME` still
 wins; no IP falls back to `<prefix>-<group-slug>` with a warning. The deploy

@@ -60,7 +60,7 @@
     in-guest hostname as <prefix>-<group>-<ip> (see CLAUDE.md), i.e. the VM
     name plus its IP with dots as hyphens, which -WaitForRegistration relies
     on to match nodes to VMs. Keep this equal to HOSTNAME_PREFIX in the node
-    template's config (default in node/config.sample: test-node) or that
+    template's config (default in node/config.sample: mp) or that
     matching breaks.
 
 .PARAMETER NodeGroups
@@ -136,7 +136,7 @@ param(
     [string] $HubVMName = "mesh-probe-hub",
 
     [ValidateRange(1, 64)] [int] $NodeCount = 3,
-    [string] $NodeNamePrefix = "test-node",
+    [string] $NodeNamePrefix = "mp",
     [string[]] $NodeGroups = @("site-a", "site-b", "site-c"),
     [string[]] $NodeSubnets,
     [string] $DnsServer,

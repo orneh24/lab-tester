@@ -310,7 +310,7 @@ descriptively, e.g. `mesh-probe-node-template-v1`.
 ### 6.1 Clone from Template
 
 Standard vCenter clone-from-template, thin provisioned, not covered here.
-Name the VM to match its role, e.g. `test-node-site-a` or `test-node-dmz`.
+Name the VM to match its role, e.g. `mp-site-a` or `mp-dmz`.
 
 ### 6.2 Assign the Correct Port Group
 
@@ -366,8 +366,8 @@ flexible anyway since they can carry the whole configuration.
 5. OK → OK, then power on.
 
 `guestinfo.meshprobe.hostname` is optional — omit it and the name is derived from
-the group and the node's IP as `test-node-<group>-<ip>` (so `site-a` at
-10.1.1.10 becomes `test-node-site-a-10-1-1-10`).
+the group and the node's IP as `mp-<group>-<ip>` (so `site-a` at
+10.1.1.10 becomes `mp-site-a-10-1-1-10`).
 
 **With PowerCLI**, which is worth it from the second node onward:
 
@@ -376,7 +376,7 @@ $vm = Get-VM "lab-test-site-a"
 $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hub_url  -Value "http://10.0.0.100" -Confirm:$false
 $vm | New-AdvancedSetting -Name guestinfo.meshprobe.group    -Value "site-a"            -Confirm:$false
 $vm | New-AdvancedSetting -Name guestinfo.meshprobe.subnet   -Value "10.1.1.0/24"       -Confirm:$false
-$vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value "test-node-site-a"  -Confirm:$false
+$vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value "mp-site-a"  -Confirm:$false
 ```
 
 Deploying the whole lab in one pass:
@@ -399,7 +399,7 @@ foreach ($n in $lab) {
     $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hub_url  -Value $hub       -Confirm:$false
     $vm | New-AdvancedSetting -Name guestinfo.meshprobe.group    -Value $n.Group   -Confirm:$false
     $vm | New-AdvancedSetting -Name guestinfo.meshprobe.subnet   -Value $n.Subnet  -Confirm:$false
-    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value ("test-node-" + $n.Group.ToLower()) -Confirm:$false
+    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value ("mp-" + $n.Group.ToLower()) -Confirm:$false
 
     Start-VM -VM $vm -Confirm:$false
 }
@@ -420,7 +420,7 @@ govc vm.change -vm lab-test-site-a \
   -e guestinfo.meshprobe.hub_url=http://10.0.0.100 \
   -e guestinfo.meshprobe.group=site-a \
   -e guestinfo.meshprobe.subnet=10.1.1.0/24 \
-  -e guestinfo.meshprobe.hostname=test-node-site-a
+  -e guestinfo.meshprobe.hostname=mp-site-a
 ```
 
 Confirm from inside the guest that the keys arrived:
@@ -550,7 +550,7 @@ begin populating on the next cron tick, within 60 seconds.
 Checking from the clone itself:
 
 ```sh
-hostname                                    # unique, e.g. test-node-site-a
+hostname                                    # unique, e.g. mp-site-a
 cat /etc/mesh-probe/config                  # values landed correctly
 rc-service mesh-probe-httpd status                 # identity page is being served
 /usr/local/bin/mesh-probe/test-cycle.sh     # run one cycle in the foreground

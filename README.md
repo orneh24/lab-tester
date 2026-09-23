@@ -97,7 +97,7 @@ at first login.
 | `guestinfo.meshprobe.hub_url` | node | `http://10.0.0.100` | **required** |
 | `guestinfo.meshprobe.group` | node | `site-a` | **required** — clusters nodes on the dashboard, filters syslog by sender |
 | `guestinfo.meshprobe.subnet` | node | `10.1.1.0/24` | derived from the DHCP lease if omitted |
-| `guestinfo.meshprobe.hostname` | node | `test-node-site-a` | derived as `<prefix>-<group>-<ip>` if omitted; must be unique lab-wide |
+| `guestinfo.meshprobe.hostname` | node | `mp-site-a` | derived as `<prefix>-<group>-<ip>` if omitted; must be unique lab-wide |
 | `guestinfo.meshprobe.dns_server` | node | `10.0.0.53` | unset skips the DNS test entirely |
 | `guestinfo.meshprobe.dns_query` | node | `example.com` | name to resolve, used only when `dns_server` is set |
 | `guestinfo.hub.ip` | hub | `10.0.0.100/24` | with neither hub key set, `hub-setup.sh` prompts at first login instead |

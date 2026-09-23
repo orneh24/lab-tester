@@ -35,7 +35,7 @@ mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$SCRIPT_DIR" "$WEB_ROOT"
 # setup.sh needs no interactive input at all.
 #
 #   PowerCLI, per clone:
-#     $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value test-node1
+#     $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value mp-node1
 #     $vm | New-AdvancedSetting -Name guestinfo.meshprobe.group    -Value site-a
 #     $vm | New-AdvancedSetting -Name guestinfo.meshprobe.subnet   -Value 10.1.1.0/24
 #     $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hub_url  -Value http://10.0.0.100
@@ -156,9 +156,9 @@ GROUP_NAME=${_group_name}
 SUBNET=${_subnet}
 
 # Explicit hostname. If empty, the hostname is derived as
-# <HOSTNAME_PREFIX>-<group>-<ip>, e.g. test-node-site-a-10-1-1-10.
+# <HOSTNAME_PREFIX>-<group>-<ip>, e.g. mp-site-a-10-1-1-10.
 NODE_HOSTNAME=${_hostname}
-HOSTNAME_PREFIX=test-node
+HOSTNAME_PREFIX=mp
 
 # Test cadence. Traceroute runs on the slower TRACEROUTE_INTERVAL because an
 # unanswered hop costs roughly the probe timeout, making a black-holed path
@@ -249,14 +249,14 @@ fi
 # node then skips it as "self", testing nothing.
 #
 # Prefer an explicit name (guestinfo.meshprobe.hostname, captured into the config
-# above). Otherwise derive <prefix>-<group>-<ip>, e.g. test-node-site-a-10-1-1-10.
+# above). Otherwise derive <prefix>-<group>-<ip>, e.g. mp-site-a-10-1-1-10.
 # The group alone is not unique (two nodes in one group would collide), and
 # only the full address is: per-site subnets like 10.1.1.0/24 and 10.2.1.0/24
 # share their last two octets. A derived name is recomputed on every run, so
 # re-running setup.sh after the IP changes renames the node; the old hub
 # entry then ages out after HUB_STALE_ENDPOINT_HOURS.
 # -------------------------------------------------------------------
-HOSTNAME_PREFIX="${HOSTNAME_PREFIX:-test-node}"
+HOSTNAME_PREFIX="${HOSTNAME_PREFIX:-mp}"
 NODE_HOSTNAME="${NODE_HOSTNAME:-}"
 
 # A live guestinfo value wins even on re-runs, so re-homing a node in vCenter

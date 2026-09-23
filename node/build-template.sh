@@ -407,19 +407,19 @@ log "Services enabled"
 log "Creating first-boot setup reminder"
 cat > /etc/motd <<'MOTDEOF'
 
-  ┌────────────────────────────────────────────────┐
-  │          mesh-probe node                       │
-  │                                                │
-  │   Not configured yet? Log in and run:          │
-  │     node-setup.sh                              │
-  │   (runs automatically at first login if this   │
-  │    node hasn't been configured)                │
-  │                                                │
-  │   Manual path:                                 │
-  │     1. Edit /etc/mesh-probe/config             │
-  │        (copy from config.sample)               │
-  │     2. Run: /usr/local/bin/mesh-probe/setup.sh │
-  └────────────────────────────────────────────────┘
+  +------------------------------------------------+
+  |          mesh-probe node                       |
+  |                                                |
+  |   Not configured yet? Log in and run:          |
+  |     node-setup.sh                              |
+  |   (runs automatically at first login if this   |
+  |    node hasn't been configured)                |
+  |                                                |
+  |   Manual path:                                 |
+  |     1. Edit /etc/mesh-probe/config             |
+  |        (copy from config.sample)               |
+  |     2. Run: /usr/local/bin/mesh-probe/setup.sh |
+  +------------------------------------------------+
 
 MOTDEOF
 
@@ -499,7 +499,7 @@ log "  Set these guestinfo keys on the clone in vCenter, then boot:"
 log "    guestinfo.meshprobe.hub_url   http://10.0.0.100"
 log "    guestinfo.meshprobe.group     site-a"
 log "    guestinfo.meshprobe.subnet    10.1.1.0/24 (optional -- derives from DHCP)"
-log "    guestinfo.meshprobe.hostname  test-node-site-a (optional)"
+log "    guestinfo.meshprobe.hostname  mp-site-a (optional)"
 log "  Then boot -- mesh-probe-firstboot configures and registers the clone"
 log "  automatically. Nothing to run by hand."
 log ""

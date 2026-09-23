@@ -308,23 +308,23 @@ log "Services enabled"
 log "Creating first-boot instructions"
 cat > /etc/motd <<'MOTDEOF'
 
-  ┌────────────────────────────────────────────────────────┐
-  │                   mesh-probe hub VM                    │
-  │                                                        │
-  │   Dashboard: http://<this-vm-ip>/                      │
-  │   Config:    /opt/mesh-probe-hub/hub.env               │
-  │   DB:        /var/lib/mesh-probe/hub.db                │
-  │   Logs:      rc-service mesh-probe-hub status          │
-  │                                                        │
-  │   Not configured yet? Log in and run:                  │
-  │     hub-setup.sh                                       │
-  │   (runs automatically at first login if the            │
-  │    static IP hasn't been set)                          │
-  │                                                        │
-  │   If IP needs changing later:                          │
-  │     set-static-ip <ip/cidr> <gateway> [dns] [hostname] │
-  │     rc-service networking restart                      │
-  └────────────────────────────────────────────────────────┘
+  +--------------------------------------------------------+
+  |                   mesh-probe hub VM                    |
+  |                                                        |
+  |   Dashboard: http://<this-vm-ip>/                      |
+  |   Config:    /opt/mesh-probe-hub/hub.env               |
+  |   DB:        /var/lib/mesh-probe/hub.db                |
+  |   Logs:      rc-service mesh-probe-hub status          |
+  |                                                        |
+  |   Not configured yet? Log in and run:                  |
+  |     hub-setup.sh                                       |
+  |   (runs automatically at first login if the            |
+  |    static IP hasn't been set)                          |
+  |                                                        |
+  |   If IP needs changing later:                          |
+  |     set-static-ip <ip/cidr> <gateway> [dns] [hostname] |
+  |     rc-service networking restart                      |
+  +--------------------------------------------------------+
 
 MOTDEOF
 
