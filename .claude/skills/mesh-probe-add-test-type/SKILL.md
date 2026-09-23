@@ -151,10 +151,11 @@ additions — every one of these needs an entry:
 servers/clients lines, project-structure services listing, and extend
 constraint 14 or add a new numbered constraint if the security review found
 something structural) · `README.md` (intro sentence, table) ·
-`docs/BUILD_GUIDE.md` (package rationale, manual scp/chmod steps,
-verification commands, test-type table + a "Why X matters" paragraph,
-"Valid test names" line, troubleshooting lists) · `docs/DEPLOYMENT.md`
-(checklist line) · `docs/HANDOFF.md` (a dated "Recent changes" entry — the
+`docs/BUILD_GUIDE.md` (test-type table, a paragraph under it if the test
+needs explaining, "Test names" line, troubleshooting commands) ·
+`docs/QUICKSTART.md` (ports table if it adds a server, node config table if
+it adds a flag, "Test names" line) · `docs/DEPLOYMENT.md` (first-clone
+checklist line) · `docs/HANDOFF.md` (a dated "Recent changes" entry — the
 one file missed on the `smtp` round) · `.claude/agents/alpine-vm-builder.md`
 (package list, budget bullet — recompute the honest worst-case total, don't
 just append) · `.claude/agents/hub-api-developer.md` (test-types line, shim

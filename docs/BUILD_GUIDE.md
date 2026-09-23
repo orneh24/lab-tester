@@ -1,1181 +1,302 @@
-# Mesh-Probe: Alpine Linux Golden Image Build Guide
+# Mesh Probe — Build Guide
 
-This guide walks through building Alpine Linux VMs for the mesh-probe connectivity testing system. You will create a base VM, configure it for one of two roles (node or hub), then convert it to a vCenter template for rapid deployment.
+Detail behind each step of the [README quick start](../README.md#quick-start)
+and the `DEPLOYMENT.md` checklist. You build one Alpine base VM, clone it,
+turn one clone into the hub and one into the node template, then clone the
+template once per network segment.
 
-## Table of Contents
+`install.sh` and the two `build-template.sh` scripts do all the package,
+service and file setup. This guide covers what they can't: the VM itself,
+the Alpine install, and configuring the clones.
+
+## Contents
 
 1. [Prerequisites](#1-prerequisites)
-2. [Base VM Creation](#2-base-vm-creation-in-vcenter)
-3. [Alpine Installation](#3-alpine-installation)
-4. [Base Package Installation](#4-base-package-installation)
-5. [Golden Image Preparation](#5-golden-image-preparation)
-6. [Cloning and Deployment](#6-cloning-and-deployment)
+2. [Create the base VM](#2-create-the-base-vm)
+3. [Install Alpine](#3-install-alpine)
+4. [Build the hub and the node template](#4-build-the-hub-and-the-node-template)
+5. [Deploy nodes](#5-deploy-nodes)
+6. [Ongoing operation](#6-ongoing-operation)
 7. [Troubleshooting](#7-troubleshooting)
-8. [Appendix A: Manual Node Configuration (reference only)](#appendix-a-manual-node-configuration-reference-only)
-9. [Appendix B: Manual Hub Configuration (reference only)](#appendix-b-manual-hub-configuration-reference-only)
-
-Sections 1-4 build the shared base VM; `node/build-template.sh` and
-`hub/build-template.sh` then turn a clone of it into each role — that's the
-whole of node/hub configuration, covered in `DEPLOYMENT.md` stages 2-3, not
-in this guide. The appendices exist only to show what those scripts do
-under the hood; do not follow them as build steps.
-
-`install.sh` (repo root) picks the role and runs the matching
-`build-template.sh` for you — run it per clone once each is on its own
-network segment (stages 2/3), not on the shared base VM. It refuses to run
-on a VM that already looks built into a role.
+8. [No GitHub access](#8-no-github-access)
 
 ---
 
 ## 1. Prerequisites
 
-Before starting, make sure you have:
-
-- **vCenter / ESXi access** with permissions to create VMs, templates, and port groups
-- **Alpine Linux Virtual ISO** -- download the `alpine-virt-<version>-x86_64.iso` image from [alpinelinux.org/downloads](https://alpinelinux.org/downloads/). The "Virtual" edition is optimized for hypervisors and is under 60 MB.
-- **Network information:**
-  - A management/routable subnet where the hub VM will live (IP address, gateway, DNS)
-  - Knowledge of which port groups map to each node's subnet
-  - The hub VM's IP address or hostname (nodes push results here)
-- **The mesh-probe project files**, reachable one of two ways:
-  - **Download (recommended):** GitHub reachable from the VM over HTTPS.
-    `wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe`
-    uses only BusyBox `wget`/`tar` and `ssl_client`, all on the base image,
-    so it works right after `setup-alpine` with no `apk add` at all. Once
-    unpacked, `sh install.sh` at the repo root is the entry point — it asks
-    hub or node and runs the matching `build-template.sh`
-  - **SCP (fallback):** the files on a machine you can SCP from. A bare
-    `setup-alpine` install has no `scp`/`sftp` binary at all — see
-    Appendix A.2 / B.2 before trying this
-- **Console access** to VMs via vCenter (the web console or VMRC)
+- vCenter / ESXi access to create VMs, templates and port groups
+- The Alpine **Virtual** ISO (`alpine-virt-<version>-x86_64.iso`) from
+  [alpinelinux.org/downloads](https://alpinelinux.org/downloads/)
+- A hub subnet that every node subnet can reach, and the hub's static IP
+- A port group per node subnet
+- Internet access from each VM while it is built (Alpine mirror, GitHub)
+- Console access to the VMs (vCenter web console or VMRC)
 
 ---
 
-## 2. Base VM Creation in vCenter
+## 2. Create the base VM
 
-Create a single base VM that will later be configured for either role.
-Creating the VM, mounting the ISO, and booting to a console are standard
-vCenter operations, not covered here — the one thing worth getting right up
-front is sizing, since it's shared by both roles:
+| Setting | Value |
+|---|---|
+| Guest OS | Linux, Other 5.x or later Linux (64-bit) |
+| vCPU | 1 |
+| RAM | 256 MB |
+| Disk | 2 GB, thin provisioned |
+| NIC | VMXNET3, on a network with DHCP |
+| SCSI controller | VMware Paravirtual |
 
-| Setting         | Value                                |
-|-----------------|--------------------------------------|
-| Guest OS Family | Linux                                |
-| Guest OS Version| Other Linux (64-bit)                 |
-| vCPU            | 1                                    |
-| RAM             | 256 MB (enough for either role)      |
-| Disk            | 2 GB, thin provisioned               |
-| NIC             | VMXNET3, connected to a network with DHCP for initial setup |
-| SCSI Controller | VMware Paravirtual                   |
+If your vCenter has no "Other 5.x or later" option, pick "Other Linux
+(64-bit)". vCenter then warns that Paravirtual is "not recommended". Ignore
+it: Alpine's kernel has the driver. LSI Logic Parallel also works.
 
-> **Note:** Production nodes need only ~128 MB RAM. The hub needs ~192 MB. Using 256 MB for the base keeps both options open. You can reduce RAM after cloning if desired.
-
-Boot to the Alpine boot prompt and log in as `root` (no password) to continue.
+256 MB fits either role. After cloning you can drop nodes to 128 MB and the
+hub to 192 MB.
 
 ---
 
-## 3. Alpine Installation
+## 3. Install Alpine
 
-### 3.1 Run setup-alpine
+Boot the ISO, log in as `root` (no password) and run `setup-alpine`:
 
-At the root prompt, start the installer:
+| Prompt | Answer |
+|---|---|
+| Keyboard layout | your layout |
+| Hostname | `mesh-probe` (each clone renames itself) |
+| Network interface | `eth0`, `dhcp` |
+| Root password | anything; the build sets it to `lab123` (see below) |
+| Timezone | `UTC` or your lab's timezone |
+| Proxy | `none`, unless your lab needs one |
+| NTP client | `chrony` |
+| Mirror | `f` (fastest) |
+| SSH server | `dropbear` |
+| Disk | `sda`, mode `sys`, erase `y` |
 
-```sh
-setup-alpine
-```
+`sys` installs to disk. The other modes run from RAM.
 
-Walk through the prompts as follows:
-
-| Prompt                        | Recommended Answer                        |
-|-------------------------------|-------------------------------------------|
-| Keyboard layout               | `us` (or your layout)                     |
-| Keyboard variant              | `us` (or your variant)                    |
-| Hostname                      | `mesh-probe` (will change per clone)      |
-| Network interface             | `eth0`                                    |
-| IP address for eth0           | `dhcp`                                    |
-| Manual network config         | `n`                                       |
-| Root password                 | Set a strong password                     |
-| Timezone                      | `UTC` (or your lab's timezone)            |
-| HTTP/FTP proxy                | `none` (unless your lab requires one)     |
-| NTP client                    | `chrony`                                  |
-| Mirror                        | `1` or `f` to auto-detect fastest         |
-| SSH server                    | `dropbear`                                |
-| Disk to use                   | `sda`                                     |
-| How to use disk               | `sys`                                     |
-| Erase disk?                   | `y`                                       |
-
-> **Alpine quirk:** `sys` mode installs Alpine to disk as a traditional system. The other modes (`diskless`, `data`) run from RAM and are not what we want here.
-
-### 3.2 Reboot
-
-Once installation completes:
-
-```sh
-reboot
-```
-
-Disconnect the ISO in vCenter (edit VM settings, disconnect the CD/DVD drive) so it boots from disk.
-
-### 3.3 Verify Boot
-
-Log in as `root`. Confirm networking is up:
+Reboot, disconnect the ISO in vCenter, log in and check the network:
 
 ```sh
 ip addr show eth0
 ping -c 2 alpinelinux.org
 ```
 
----
+The build scripts set the root password to `lab123`. To use your own, run
+the build with `MESH_PROBE_ROOT_PASSWORD=<password>` set.
 
-## 4. Base Package Installation
-
-### 4.1 Enable the Community Repository
-
-Alpine ships with the `main` repository enabled. Several packages we need are in `community`:
-
-```sh
-vi /etc/apk/repositories
-```
-
-Uncomment the line containing `/community` (remove the leading `#`). The file should look like:
-
-```
-https://dl-cdn.alpinelinux.org/alpine/v3.XX/main
-https://dl-cdn.alpinelinux.org/alpine/v3.XX/community
-```
-
-> **Alpine quirk:** Alpine uses `vi` (actually BusyBox vi) by default. There is no `nano` unless you install it (`apk add nano`).
-
-Then update the package index:
-
-```sh
-apk update
-```
-
-### 4.2 Package Choices That Are Load-Bearing (Both Roles)
-
-Both `build-template.sh` scripts install their own package sets — the hub's
-and the node's differ, and each script is the authoritative list for its
-role. You do not need to install these by hand; this section exists so the
-choices are legible when you read either script.
-
-Two of them are not interchangeable with what BusyBox or dropbear give you, and
-both failures are silent:
-
-- `openssh-client` (virtual, provided by `openssh-client-default`) installs
-  `/usr/bin/ssh`. `test-cycle.sh` passes `-o StrictHostKeyChecking=no -o
-  UserKnownHostsFile=/dev/null`, which dropbear's `dbclient` rejects. Never add
-  the `dropbear-ssh` subpackage — it installs its own `/usr/bin/ssh` symlink and
-  collides at that path. Plain `dropbear` is the server only.
-- `iputils-ping` **replaces** BusyBox's `/bin/ping` at the same path. The PMTU
-  probe needs its `-M do`, which BusyBox ping does not implement, so this is a
-  package swap rather than a `PATH` question.
-
-A third package choice is not silent but is still worth getting right:
-`samba-server` and `samba-client`, never the `samba` metapackage. The
-metapackage pulls in winbind and the AD domain-controller machinery that this
-lab has no use for; `samba-server` alone does not depend on either.
-
-A fourth: `opensmtpd`, never the `opensmtpd-openrc` subpackage. That
-subpackage's service is named bare `smtpd` — the same generic-name collision
-risk `httpd` was — and installing it would let an operator `rc-update add
-smtpd` by accident, bypassing `ENABLE_SMTP` and every safety guard in this
-project's own `smtpd.conf`. `node/services/smtpd.initd` ships our own
-`mesh-probe-smtpd` service instead. `opensmtpd` also claims `/usr/sbin/sendmail`,
-which is harmless alone but a hard collision if `postfix`/`ssmtp`/`msmtp` are
-ever added.
-
-> CLAUDE.md constraints 14 and 21 have the full reasoning. `node/build-template.sh`
-> checks the ping binary, that SMB's `smbclient`/`smbd` both run, and that
-> SMTP's `smtpd -n` parses our config **and that config contains no `relay`
-> action** — at build time, warning rather than aborting the build.
-
-### 4.3 Hub-Only Packages (Python, Flask, waitress)
-
-The hub needs Python, Flask and waitress on top of the shared set.
-`hub/build-template.sh` installs them and handles the awkward part for you: it
-falls back to `pip3 install --break-system-packages` when a package is not in
-the Alpine repository, which newer Alpine/Python versions require because they
-enforce PEP 668.
-
-> Waitress matters more than it looks. `serve.py` falls back to Flask's
-> development server when it cannot import waitress — single-threaded, so the
-> whole mesh's result pushes queue behind one another. If the hub feels slow
-> under load, check the first lines of its log for that fallback warning.
+Now clone the VM twice (hub and node template).
 
 ---
 
-## 5. Golden Image Preparation
+## 4. Build the hub and the node template
 
-Before converting to a template, clean up the VM so each clone starts fresh.
-
-> **5.1 and 5.2 already happened.** Both `build-template.sh` scripts run this
-> exact cleanup themselves as their last step (host keys, machine-id,
-> hostname reset, logs, shell history, apk cache, zero-free-space) — check
-> either script's own final `log` output, which tells you so. Nothing to run
-> by hand here for either role. The one thing neither script cleans up is a
-> repo download used to get the project files onto the VM in the first place
-> (§1 / DEPLOYMENT stage 1) — `rm -rf /root/mesh-probe` if you used one,
-> right before 5.3. 5.1/5.2 are kept below only as reference for what the
-> scripts do; 5.3-5.5 are the real remaining manual steps, for both roles.
->
-> **But if you then verified the image** — logged in and let `node-setup.sh`
-> prompt you (or set `/etc/mesh-probe/config` and ran `setup.sh` directly) to
-> confirm the node registers against the live hub, as DEPLOYMENT stage 3 has
-> you do — that verification just undid the config, hostname and login-stamp
-> parts of 5.1's cleanup: `setup.sh` writes a real config and sets a real
-> hostname, and `node-setup.sh` writes `/etc/mesh-probe/.setup-done`.
-> **Redo all three before 5.3**, or the template ships with a live
-> `GROUP_NAME`/`SUBNET` and a real hostname baked in (every clone from it
-> starts with that same hostname — the collision constraint 1 exists to
-> prevent), *and* with the login stamp present, so `node-setup.sh` never
-> even offers the prompt on any clone made from it.
->
-> ```sh
-> rm -f /etc/mesh-probe/config /etc/mesh-probe/config.bak-* \
->       /etc/mesh-probe/.firstboot-done /etc/mesh-probe/.setup-done
-> printf 'mesh-probe-template\n' > /etc/hostname
-> ```
->
-> Same applies to the hub if you tested registration/dashboard access before
-> converting it: `rm -f /var/lib/mesh-probe/hub.db /etc/mesh-probe-hub/.setup-done`
-> (see 5.5's note — templating the hub is optional in the first place).
-
-### 5.1 Clean Up (Node Image, reference only — see banner above)
-
-What the script already ran, for reading:
+On each clone, run as root:
 
 ```sh
-# Remove SSH host keys (regenerated on first boot)
-rm -f /etc/dropbear/dropbear_*
-
-# Clear machine-id so each clone gets a unique one
-echo "" > /etc/machine-id
-
-# Reset hostname (clones should set their own)
-printf 'mesh-probe-template\n' > /etc/hostname
-
-# Remove config, firstboot and login-prompt stamps to force per-clone setup
-rm -f /etc/mesh-probe/config /etc/mesh-probe/config.bak-* \
-      /etc/mesh-probe/.firstboot-done /etc/mesh-probe/.setup-done
-
-# Clean logs
-rm -f /var/log/*.log
-find /var/log -type f -name "*.log.*" -delete
-> /var/log/messages
-
-# Clear shell history
-> /root/.ash_history
-
-# Clear package cache
-apk cache clean 2>/dev/null
-rm -rf /var/cache/apk/*
+wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh
 ```
 
-### 5.2 Zero Free Space (Thin Provisioning Optimization, reference only)
+Pick **hub** on one clone and **node** on the other. The build enables the
+community repository, installs packages, installs the services and cleans
+the VM for cloning. It takes a few minutes; zeroing free space at the end is
+the slow part.
 
-What the script already ran, for reading — this is what makes thin-provisioned disks reclaim unused space:
+Some package choices matter (for example, `iputils-ping` instead of
+BusyBox ping, which the PMTU test needs). `CLAUDE.md` constraint 14 explains
+them. `node/build-template.sh` checks the important ones and warns if they
+are wrong.
+
+### 4.1 Hub
+
+Log out and back in. `hub-setup.sh` asks for the static IP and gateway, then
+restarts networking and starts the hub. To do it by hand instead:
 
 ```sh
-dd if=/dev/zero of=/zero.fill bs=1M 2>/dev/null; rm -f /zero.fill
-sync
+set-static-ip <hub-ip>/<cidr> <gateway> [dns] [hostname]
+rc-service networking restart
+rc-service mesh-probe-hub start
 ```
 
-> **Note:** This will temporarily fill the disk, then delete the fill file. It makes the VMDK compressible and thin-friendly.
+Or set `guestinfo.hub.ip` (e.g. `10.0.0.100/24`) and `guestinfo.hub.gateway`
+on the VM and reboot; the `mesh-probe-hub-firstboot` service applies them.
 
-### 5.3 Shutdown
+Open `http://<hub-ip>/` to check. Settings live in
+`/opt/mesh-probe-hub/hub.env`; restart the hub after editing it.
+
+A lab normally has one hub, so you don't need to make it a template.
+
+### 4.2 Node template
+
+The build leaves the node clean: no config, hostname `mesh-probe-template`,
+no SSH host keys, no login stamp. Shut it down and convert it to a template:
 
 ```sh
+rm -rf /root/mesh-probe   # optional
 poweroff
 ```
 
-### 5.4 Dropbear Host Key Regeneration
+Name the template something like `mesh-probe-node-template-v1`.
 
-Dropbear automatically regenerates missing host keys on service start, so no additional first-boot script is needed for SSH keys. After cloning, the first `rc-service dropbear start` creates new keys.
-
-### 5.5 Convert to Template in vCenter
-
-Standard vCenter template conversion, not covered here. Name it
-descriptively, e.g. `mesh-probe-node-template-v1`.
-
-> Do this once for the node clone. Since there is typically only one hub,
-> you may prefer to keep the hub clone as a regular VM instead of
-> converting it — 5.1-5.4 still apply to it either way, since
-> `hub/build-template.sh` runs the same cleanup as `node/build-template.sh`.
+**Don't run `setup.sh` or answer the login prompt on the template.** That
+writes a config, hostname, SSH host keys and login stamp, and every clone
+would inherit them. Test on the first clone instead.
 
 ---
 
-## 6. Cloning and Deployment
+## 5. Deploy nodes
 
-### 6.1 Clone from Template
+### 5.1 Clone and connect
 
-Standard vCenter clone-from-template, thin provisioned, not covered here.
-Name the VM to match its role, e.g. `mp-site-a` or `mp-dmz`.
+1. Clone the template.
+2. Before booting, set the NIC to the port group of the segment this node
+   tests. The node needs DHCP on that segment.
+3. Optional: lower RAM to 128 MB.
 
-### 6.2 Assign the Correct Port Group
+### 5.2 Configure: guestinfo (recommended)
 
-Before booting the clone:
+Set the keys on the VM before first boot. On boot, the
+`mesh-probe-firstboot` service runs `setup.sh` with them, and the node
+configures and registers itself with no console session.
 
-1. Edit the VM settings.
-2. Change the NIC's **Network** to the port group for the subnet this node
-   should test.
+The keys are listed in the [README](../README.md#vmware-guestinfo-keys).
+Only `hub_url` and `group` are required. In the vSphere Client: VM →
+**Edit Settings** → **VM Options** → **Advanced** → **Edit Configuration** →
+add one row per key.
 
-This is critical -- the node must be on the same L2 segment as the subnet
-under test to get an IP via DHCP and to test that specific link.
-
-### 6.3 Adjust RAM (Optional)
-
-If you used 256 MB for the base, node clones can drop to 128 MB — edit VM
-settings while powered off.
-
-### 6.4 Supply the per-node configuration
-
-Each clone needs two required values — the hub URL and the group it belongs
-to — plus a unique hostname (explicit, or derived from the group). Subnet is
-optional: `setup.sh` derives it from the interface's own DHCP lease if you
-leave it out. There are two ways to deliver whatever you do set.
-
-**Every clone must end up with a unique hostname.** The hub keys its endpoint
-table by hostname, so two nodes sharing one name will overwrite each other and
-the mesh will collapse to a single entry.
-
-#### Option A — guestinfo (recommended)
-
-`open-vm-tools` lets the guest read any custom key set on the VM in vCenter.
-Set the keys before first boot and `setup.sh` runs without prompting.
-
-Note that vCenter does *not* expose the VM's display name to the guest — that
-is deliberate on VMware's part. You set explicit keys instead, which is more
-flexible anyway since they can carry the whole configuration.
-
-**In the vSphere Client:**
-
-1. Right-click the clone → **Edit Settings**
-2. **VM Options** tab → expand **Advanced**
-3. Click **Edit Configuration…** next to Configuration Parameters
-4. **Add Configuration Params**, then add one row per key:
-
-   The keys, and the config variable each one sets, are listed in the header of
-   `node/config.sample` — that file ships beside the code that reads them, so
-   work from it rather than from a copy here. `hub_url` and `group` are
-   required; `subnet` and the rest are optional (`subnet` derives from the
-   DHCP lease if omitted). The PowerCLI and govc examples below still set
-   `subnet` explicitly since a real lab may want it pinned rather than
-   derived, but it's not required.
-
-5. OK → OK, then power on.
-
-`guestinfo.meshprobe.hostname` is optional — omit it and the name is derived from
-the group and the node's IP as `mp-<group>-<ip>` (so `site-a` at
-10.1.1.10 becomes `mp-site-a-10-1-1-10`).
-
-**With PowerCLI**, which is worth it from the second node onward:
+With PowerCLI:
 
 ```powershell
-$vm = Get-VM "lab-test-site-a"
-$vm | New-AdvancedSetting -Name guestinfo.meshprobe.hub_url  -Value "http://10.0.0.100" -Confirm:$false
-$vm | New-AdvancedSetting -Name guestinfo.meshprobe.group    -Value "site-a"            -Confirm:$false
-$vm | New-AdvancedSetting -Name guestinfo.meshprobe.subnet   -Value "10.1.1.0/24"       -Confirm:$false
-$vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value "mp-site-a"  -Confirm:$false
+$vm = Get-VM "mp-site-a"
+$vm | New-AdvancedSetting -Name guestinfo.meshprobe.hub_url -Value "http://10.0.0.100" -Confirm:$false
+$vm | New-AdvancedSetting -Name guestinfo.meshprobe.group   -Value "site-a"            -Confirm:$false
 ```
 
-Deploying the whole lab in one pass:
+To change a key later, use `Get-AdvancedSetting | Set-AdvancedSetting`;
+`New-AdvancedSetting` fails if the key exists. To deploy a whole lab at once,
+use `deploy/Deploy-MeshProbe.ps1` (see `deploy/README.md`).
 
-```powershell
-$hub = "http://10.0.0.100"
-$lab = @(
-    @{ Name="lab-test-site-a"; Group="site-a"; Subnet="10.1.1.0/24"; PortGroup="VLAN101-site-a" }
-    @{ Name="lab-test-site-b"; Group="site-b"; Subnet="10.2.2.0/24"; PortGroup="VLAN102-site-b" }
-    @{ Name="lab-test-site-c"; Group="site-c"; Subnet="10.3.3.0/24"; PortGroup="VLAN103-site-c" }
-)
-
-foreach ($n in $lab) {
-    $vm = New-VM -Name $n.Name -Template "mesh-probe-node" `
-                 -VMHost (Get-VMHost | Select-Object -First 1) -Confirm:$false
-
-    Get-NetworkAdapter -VM $vm |
-        Set-NetworkAdapter -NetworkName $n.PortGroup -Confirm:$false
-
-    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hub_url  -Value $hub       -Confirm:$false
-    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.group    -Value $n.Group   -Confirm:$false
-    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.subnet   -Value $n.Subnet  -Confirm:$false
-    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value ("mp-" + $n.Group.ToLower()) -Confirm:$false
-
-    Start-VM -VM $vm -Confirm:$false
-}
-```
-
-To change a key later, use `Get-AdvancedSetting | Set-AdvancedSetting` rather
-than `New-AdvancedSetting`, which fails on an existing name:
-
-```powershell
-Get-VM "lab-test-site-a" | Get-AdvancedSetting -Name guestinfo.meshprobe.subnet |
-    Set-AdvancedSetting -Value "10.1.99.0/24" -Confirm:$false
-```
-
-**With govc:**
+With govc:
 
 ```sh
-govc vm.change -vm lab-test-site-a \
+govc vm.change -vm mp-site-a \
   -e guestinfo.meshprobe.hub_url=http://10.0.0.100 \
-  -e guestinfo.meshprobe.group=site-a \
-  -e guestinfo.meshprobe.subnet=10.1.1.0/24 \
-  -e guestinfo.meshprobe.hostname=mp-site-a
+  -e guestinfo.meshprobe.group=site-a
 ```
 
-Confirm from inside the guest that the keys arrived:
+To check from inside the guest: `vmware-rpctool "info-get guestinfo.meshprobe.group"`.
+`No value found` just means the key isn't set.
 
-```sh
-vmware-rpctool "info-get guestinfo.meshprobe.group"
-```
-
-An unset key reports `No value found` — that is the expected response, not an
-error, and `setup.sh` treats it as "fall back to the next source".
-
-#### Option B — interactive
-
-Skip the keys entirely and let `setup.sh` prompt for the values — or, on a
-freshly-booted clone, just log in: `node-setup.sh` offers exactly this
-automatically at first login (§6.5b). Fine for one or two nodes, tedious
-past that.
-
-### 6.5 Run setup and register
-
-```sh
-/usr/local/bin/mesh-probe/setup.sh
-```
-
-Or via the wizard — same effect, plus the permission gate and stamp
-bookkeeping described in §6.5b:
-
-```sh
-node-setup.sh
-```
-
-Either writes `/etc/mesh-probe/config`, sets the hostname, enables the
-services, installs the cron entries, builds the identity page, and performs
-an initial registration against the hub. It is safe to re-run — an existing
-config file is kept, and a live `guestinfo.meshprobe.hostname` still takes effect.
-
-Precedence for each value is: **guestinfo → environment variable → prompt**,
-except `SUBNET`, which has one extra fallback before the prompt: derived
-from the interface's own DHCP lease.
-
-### 6.5a Zero-touch: let first boot do it
-
-The template ships an OpenRC service, `mesh-probe-firstboot`, that runs
-`setup.sh` automatically when `guestinfo.meshprobe.hub_url` and `guestinfo.meshprobe.group`
-are both present. With the keys set at clone time you never open a console —
-power on and the node configures, names itself, and registers.
-
-If the keys are absent the service stands down and leaves the MOTD
-instructions, because `setup.sh` would otherwise block on prompts with nobody
-attached — the login prompt in §6.5b covers that case instead. On success it
-stamps two files: `/etc/mesh-probe/.firstboot-done` (this service's own
-re-entry guard, its only reader) and `/etc/mesh-probe/.setup-done` with
-content `configured (guestinfo)` (the login prompt's shared stamp — see
-§6.5b), and logs to `/var/log/mesh-probe/firstboot.log`.
-
-To re-run it deliberately:
+The first-boot service logs to `/var/log/mesh-probe/firstboot.log`. With no
+keys set it does nothing, and the login prompt takes over. To run it again:
 
 ```sh
 rm /etc/mesh-probe/.firstboot-done /etc/mesh-probe/config
 rc-service mesh-probe-firstboot start
 ```
 
-The two stamps are independent — this only re-arms firstboot itself. If
-`.setup-done` is still present from an earlier run, that doesn't block
-firstboot (its own gate is `.firstboot-done` alone), but it does mean the
-*login prompt* stays quiet; remove it too if you want both re-armed.
+### 5.3 Configure: at login
 
-### 6.5b First-login setup prompt
+Boot the clone and log in. `node-setup.sh` asks
+`Configure this node now? [Y/n]` and runs `setup.sh`, which asks for anything
+not already set. You can also run `/usr/local/bin/mesh-probe/setup.sh`
+yourself at any time.
 
-The Node equivalent of the Hub's `hub-setup.sh` (§B in Appendix B, or just
-"log in and run `hub-setup.sh`" from the Hub's own MOTD): a clone with no
-guestinfo keys set is not silently unconfigured — `node-setup.sh` is invited
-at the very first interactive login (via `/etc/profile.d`) and asks
-`Configure this node now? [Y/n]`.
+The prompt appears only in an interactive login on a real terminal, never
+for `ssh host cmd` or scp. If you decline, you can choose not to be asked
+again; `node-setup.sh --force` asks again later.
 
-**Three guard layers**, all present before the wizard is even invoked,
-mirroring the Hub's exactly:
+Each value comes from guestinfo first, then an environment variable, then a
+prompt. `SUBNET` is taken from the DHCP lease before prompting. The hostname
+is `mp-<group>-<ip>` unless you set one.
 
-```sh
-case "$-" in
-    *i*)
-        if [ -t 0 ] && [ ! -f /etc/mesh-probe/.setup-done ]; then
-            /usr/local/bin/mesh-probe/node-setup.sh || true
-        fi
-        ;;
-esac
-```
+### 5.4 What `setup.sh` does
 
-Interactive shell only (`case "$-" in *i*)` — excludes `ssh host cmd` and
-scp/rsync's non-interactive invocation), a real tty (`[ -t 0 ]` — excludes a
-piped or closed stdin), and the stamp file. `|| true` stops a failing wizard
-from killing the login shell.
+It writes `/etc/mesh-probe/config`, sets the hostname, starts the services,
+adds the cron jobs (every 60 s for tests, every 5 min for registration) and
+registers with the hub. It is safe to re-run: it keeps an existing config.
 
-**The wizard itself collects nothing** — it only asks permission and
-delegates to `setup.sh`, which already does all the actual value collection
-(guestinfo → environment → prompt, with `SUBNET`'s DHCP-derivation
-fallback). Decline it and you're offered `Skip and don't ask again at
-login? [y/N]`; answer yes and it won't ask again until you run
-`node-setup.sh --force` yourself.
+### 5.5 Check
 
-**Stamp file**: `/etc/mesh-probe/.setup-done`, distinct from
-`.firstboot-done` (see §6.5a) on purpose — reusing that file would mean
-declining the login prompt silently disarms the zero-touch guestinfo path
-too. `cat` it to see why the prompt has gone quiet:
-
-| Content | Meaning |
-|---|---|
-| `configured` | the wizard ran `setup.sh` successfully |
-| `skipped` | declined, asked not to be asked again |
-| `configured (guestinfo)` | `firstboot.initd` configured it (§6.5a) |
-| `configured (existing config)` | adopted — `setup.sh` was run by hand before the wizard ever saw this node |
-
-**`--force`** re-prompts even when already stamped. If a real config exists,
-it first shows the current `HUB_URL`/`GROUP_NAME`/`SUBNET` and asks
-`Discard this config and collect fresh values? [y/N]` — yes backs it up to
-`config.bak-<timestamp>` (not deleted) and lets `setup.sh` re-collect from
-scratch; no/EOF just re-runs `setup.sh` as a refresh against the existing
-config (services/cron only, values unchanged). Never touches
-`.firstboot-done` — re-arming *that* is the separate recipe in §6.5a.
-
-### 6.6 Verify on the dashboard
-
-Open the hub dashboard at `http://<hub-ip>/` (port 80). The clone should appear
-in the endpoint list within a few seconds of `setup.sh` finishing. Test results
-begin populating on the next cron tick, within 60 seconds.
-
-Checking from the clone itself:
+The node appears on the dashboard within seconds, and results within a
+minute. On the node:
 
 ```sh
-hostname                                    # unique, e.g. mp-site-a
-cat /etc/mesh-probe/config                  # values landed correctly
-rc-service mesh-probe-httpd status                 # identity page is being served
-/usr/local/bin/mesh-probe/test-cycle.sh     # run one cycle in the foreground
+hostname                                   # e.g. mp-site-a-10-1-1-10
+test-status                                # last cycle's results (-f to follow)
 tail -f /var/log/mesh-probe/test-cycle.log
 ```
 
 ---
 
-## 6A. Ongoing operation
+## 6. Ongoing operation
 
-### 6A.1 Test types
+### 6.1 Test types
 
-| Label | Test | Runs when |
-|-------|------|-----------|
+| Label | Test | Runs |
+|---|---|---|
 | H | HTTP fetch of the target's identity page | always |
-| S | SSH session using the shared mesh key | always |
-| T | traceroute | every `TRACEROUTE_INTERVAL` (default 300s), or immediately when H or S to that target fails |
-| M | path-MTU probe, DF bit set | always |
-| D | DNS resolution | only when `DNS_SERVER` is set |
-| I | iperf3 throughput | only when `ENABLE_IPERF=true` |
-| B | SMB fetch of the probe file (`smbclient` against `mesh-probe-smbd`) | only when `ENABLE_SMB=true` |
-| L | Packet loss % / RTT jitter (`fping`) | always |
-| E | SMTP envelope conversation (`EHLO`/`MAIL`/`RCPT`/`RSET`, never `DATA`) against `mesh-probe-smtpd` | mesh: only when `ENABLE_SMTP=true`; static targets: always |
+| S | SSH login with the shared mesh key | always |
+| T | traceroute | every `TRACEROUTE_INTERVAL` (300 s), and right after H or S fails |
+| M | path MTU, DF bit set | always |
+| D | DNS lookup of `DNS_QUERY` | when `DNS_SERVER` is set |
+| I | iperf3 throughput | when `ENABLE_IPERF=true` |
+| B | SMB download of a probe file | when `ENABLE_SMB=true` |
+| L | packet loss and jitter (`fping`) | always |
+| E | SMTP conversation, never sends mail | mesh: when `ENABLE_SMTP=true`; static targets: always |
 
-**Why E matters.** Every other gated test either works or doesn't; SMTP is
-the one that catches a device *passing* traffic while *rewriting* it. An
-SMTP ALG / ESMTP inspection engine — common on firewalls and NAT gateways —
-masks unrecognised capability verbs (e.g. `STARTTLS`) with runs of `X`, so
-`250-XXXXXXXX` in the recorded `output` means an inspection engine is
-editing the session in flight — nothing else in this matrix would ever
-notice. `success` gates on the banner + `EHLO` response only, not on `RCPT`:
-a real, correctly-configured relay rejects `RCPT TO:<probe@mesh-probe.invalid>`
-with `550`, which must not paint it red. The conversation never issues
-`DATA` and the server has no `relay` action — see CLAUDE.md constraint 21.
+**M (path MTU)** sends a full-size packet (1472-byte payload, 1500 total)
+with DF set. Every other test uses small packets, so a tunnel that drops
+large packets looks green everywhere else. On failure it steps down through
+smaller sizes and reports, for example,
+`PMTU below 1500; largest passing 1428 bytes`. If nothing gets through at
+any size, it reports `path down, not an MTU issue`.
 
-**Why M matters.** Every other test uses small payloads, so a tunnel that
-carries small packets but drops large ones reads green right across the
-matrix — peering up, HTTP fine, SSH fine, large transfers hanging. The PMTU
-probe sends at `PMTU_SIZE` (default 1472 payload = 1500 total) with DF set.
-On failure it steps down through 1400/1300/1200/1000/500 to bracket the break
-and reports, for example, `PMTU below 1500; largest passing 1428 bytes`.
+**E (SMTP)** catches a firewall that *rewrites* traffic instead of blocking
+it. SMTP inspection engines replace capability words they don't know with
+`X`s, so `250-XXXXXXXX` in the output means something is editing the
+session. The test passes on the greeting and `EHLO` reply only; a real relay
+rejecting the probe address with `550` is normal. See `CLAUDE.md`
+constraint 21 for why this can never send mail.
 
-If nothing answers at any size it reports `path down, not an MTU issue`, so a
-dead path is not mistaken for a clamped one.
+**T (traceroute)** runs rarely because a dead path is slow to trace. It
+uses one probe per hop and at most 10 hops, so it can't overrun the
+60-second cycle when the network breaks.
 
-**Why T is rationed.** traceroute's default is 3 probes per hop; at a 2-second
-wait an unanswered hop costs 6s, and a fully black-holed path to 15 hops costs
-90s — per target, tested serially. That used to overrun the 60-second cycle
-whenever paths were broken, which is precisely when you want the data. It now
-runs with `-q 1 -m 10` on a slower schedule, plus on demand on failure.
+### 6.2 Static targets
 
-### 6A.2 Static targets
-
-Addresses that run no agent — a gateway, a device loopback, an outside host —
-are held on the hub and merged into every node's cycle. Configure once, not
-per node. Each target declares which tests apply, since a loopback answers
-traceroute and a PMTU probe but has no HTTP server.
+Addresses with no agent (a gateway, a loopback, an outside host). Add them
+once on the hub; every node tests them from its next cycle. List only the
+tests the target can answer.
 
 ```sh
-# add
 curl -X POST http://<hub-ip>/targets -H 'Content-Type: application/json' \
   -d '{"name":"gw-a","ip":"10.1.1.1","tests":["traceroute","pmtu"],"note":"site-a gateway"}'
-
-# list
-curl -s http://<hub-ip>/targets | jq
-
-# remove
+curl -s http://<hub-ip>/targets
 curl -X DELETE http://<hub-ip>/targets/gw-a
 ```
 
-Valid test names are `http`, `ssh`, `traceroute`, `pmtu`, `dns`, `iperf3`,
-`smb`, `loss`, `smtp`; an unknown name is rejected with a 400 listing what it
-accepts. Nodes pick up changes on their next cycle, within 60 seconds.
+Test names: `http ssh traceroute pmtu dns iperf3 smb loss smtp`. An unknown
+name gets a 400.
 
-### 6A.3 Updating the agent scripts
+### 6.3 Updating the node scripts
 
-The hub serves the agent scripts from `/opt/mesh-probe-hub/agent/`, and every
-node converges there on its 5-minute registration run. Editing the file *is*
-the deploy — checksums are computed on request, so there is no rebuild step:
+The hub serves `test-cycle.sh` from `/opt/mesh-probe-hub/agent/`. Edit it
+there, and every node picks it up at its next registration (within 5
+minutes). A node only accepts the new version if its checksum matches, it
+passes `sh -n`, and a real test cycle succeeds. Otherwise it keeps the old
+one. Watch `/var/log/mesh-probe/register.log`. To stop a node updating, set
+`AGENT_AUTOUPDATE=false` in its config.
 
-```sh
-vi /opt/mesh-probe-hub/agent/test-cycle.sh
-```
+Only `test-cycle.sh` updates itself. Copy changes to `register.sh`,
+`setup.sh` or `test-status.sh` to nodes yourself (`CLAUDE.md` constraint 13).
 
-Three gates run before a node trusts an update: the download must match the
-sha256 the hub publishes, it must pass `sh -n`, and for `test-cycle.sh` it
-must complete a real run. The previous copy is kept as `.known-good` and
-restored if that run fails, so a bad edit cannot leave the mesh dead — the
-nodes simply stay on the last working version and log why.
+> **The hub API has no authentication.** Anyone who can reach it can post
+> results, add targets or change the script every node runs. Keep the hub on
+> an isolated lab network.
 
-Watch it land:
+### 6.4 Syslog
 
-```sh
-tail -f /var/log/mesh-probe/register.log
-```
-
-Pin a node with `AGENT_AUTOUPDATE=false` in `/etc/mesh-probe/config`.
-
-> **Note:** the hub API is unauthenticated. Anyone who can reach it can post
-> results, add targets, or change the agent scripts every node then executes.
-> That is acceptable on an isolated lab segment and nowhere else — do not
-> expose the hub to a shared or production network.
-
----
-
-## 7. Troubleshooting
-
-### Node Cannot Reach the Hub
-
-**Symptoms:** `curl http://<hub-ip>` times out or is refused.
-
-```sh
-# Check if the VM has an IP
-ip addr show eth0
-
-# Check default route
-ip route
-
-# Ping the gateway (network gateway)
-ping -c 2 <gateway-ip>
-
-# Ping the hub
-ping -c 2 <hub-ip>
-
-# Check if it is a port/firewall issue (hub listening?)
-curl -v http://<hub-ip>/ 2>&1 | head -20
-```
-
-**Common causes:**
-- Node is on the wrong port group (wrong VLAN)
-- No route from the node's subnet to the hub's subnet (check the network path)
-- Hub's Flask app is not running (`rc-service mesh-probe-hub status` on the hub)
-- Hub is bound to `127.0.0.1` instead of `0.0.0.0` (check `run.sh` or `config.py`)
-
-### DHCP Not Working
-
-**Symptoms:** `eth0` has no IP address after boot.
-
-```sh
-# Request a lease manually
-udhcpc -i eth0
-
-# Check if the DHCP client is configured
-cat /etc/network/interfaces
-```
-
-**Common causes:**
-- No DHCP pool configured for this subnet
-- Node is on the wrong port group
-- VMXNET3 driver issue (rare -- check `dmesg | grep -i vmxnet`)
-
-If DHCP genuinely isn't available on this subnet, re-run `setup.sh` at a
-console: it detects the missing address and prompts for a one-time static
-IP/CIDR and gateway as a failsafe. This only helps when a human is attached
-— the zero-touch firstboot path runs with stdin closed specifically so it
-can't hang the boot on a prompt, so it skips this and the node just stays
-silently unreachable until someone fixes DHCP or runs `setup.sh` by hand.
-
-### Tests Failing
-
-**Symptoms:** Dashboard shows failures for specific test types.
-
-```sh
-# Run a test cycle manually and watch the output
-/usr/local/bin/mesh-probe/test-cycle.sh
-
-# Test individual services on a remote node
-curl -s http://<remote-node-ip>/
-ssh root@<remote-node-ip> echo ok
-iperf3 -c <remote-node-ip> -t 2
-smbclient -N //<remote-node-ip>/labshare -c 'get probe.bin /dev/null'
-fping -c 5 <remote-node-ip>
-printf 'EHLO test\r\nQUIT\r\n' | nc -w 3 <remote-node-ip> 25
-traceroute <remote-node-ip>
-```
-
-**Common causes:**
-- Target node's service is not running (iperf3, httpd, dropbear, mesh-probe-smbd, mesh-probe-smtpd)
-- ACLs or firewall rules on the network path blocking specific ports
-- SSH host key issues (dropbear regenerated keys but known_hosts has old key)
-  ```sh
-  # Clear known hosts if needed
-  > /root/.ssh/known_hosts
-  ```
-
-### Dashboard Not Loading
-
-**Symptoms:** Browser cannot reach `http://<hub-ip>`.
-
-On the hub VM:
-
-```sh
-# Check if the service is running
-rc-service mesh-probe-hub status
-
-# Check logs
-cat /var/log/mesh-probe-hub.log
-
-# Check if Flask is listening
-netstat -tlnp | grep ':80 '
-
-# Try starting manually to see errors
-cd /opt/mesh-probe-hub && /bin/sh run.sh
-```
-
-**Common causes:**
-- Python dependency missing (`pip3 install -r requirements.txt --break-system-packages`)
-- SQLite database permissions (check that the db directory is writable)
-- Port conflict (something else on port 80 — or on `HUB_PORT`, if changed in `hub.env`)
-- Syntax error in `app.py` or `config.py` (check the log output)
-
-### Services Not Starting After Clone
-
-```sh
-# List enabled services
-rc-update show default
-
-# Start all services in the default runlevel
-rc default
-
-# Check for errors
-rc-status -a
-```
-
-If a service fails to start, check its log or run it manually. OpenRC logs to `/var/log/messages` by default:
-
-```sh
-grep -i error /var/log/messages | tail -20
-```
-
-### General Tips
-
-- **Alpine's shell is `ash`, not `bash.`** Most bash syntax works, but arrays and some advanced features do not. Scripts should use `#!/bin/sh`.
-- **Package management** uses `apk`, not `apt` or `yum`:
-  ```sh
-  apk update          # refresh package index
-  apk add <pkg>       # install
-  apk del <pkg>       # remove
-  apk search <term>   # search
-  ```
-- **Service management** uses OpenRC, not systemd:
-  ```sh
-  rc-service <svc> start|stop|restart|status
-  rc-update add|del <svc> default
-  ```
-- **Persistent changes** require `lbu commit` only in diskless mode. Since we installed in `sys` mode, changes are written to disk normally.
-
----
-
-## Appendix A: Manual Node Configuration (reference only)
-
-> **Superseded by `node/build-template.sh`**, exactly as Appendix B is by the
-> hub's script — or by `install.sh` at the repo root, which asks the role and
-> runs the right one. Copy `node/` to the VM and run it: it installs the
-> package set above, populates `/usr/local/bin/mesh-probe/`, installs the
-> services and the logrotate config, generates the shared SSH keypair, and
-> enables `dropbear`, `crond`, `mesh-probe-httpd`, `chronyd`, `open-vm-tools`, the
-> first-boot service, and the `node-setup.sh` login prompt (§6.5b).
-> `DEPLOYMENT.md` stage 3 is the current procedure.
->
-> **Do not follow the steps below as a build.** They assume a package set
-> you installed yourself, and a missing `openssh-client` or `iputils-ping`
-> produces a node that registers and reports green while its SSH and PMTU
-> tests can never pass (§4.2). This appendix exists only so you can read
-> what the script does, or troubleshoot a half-built node.
-
-Starting from the base VM (or a clone of it), configure it as a node.
-
-### A.1 Create Directory Structure
-
-```sh
-mkdir -p /etc/mesh-probe
-mkdir -p /usr/local/bin/mesh-probe
-mkdir -p /var/www/localhost/htdocs
-```
-
-### A.2 Copy Project Files
-
-> **The VM needs `scp` installed before any of this works.** A bare
-> `setup-alpine` install with only dropbear has no `scp` or `sftp` binary at
-> all — verified against a real dropbear + no-openssh-client Alpine box, a
-> plain `scp` attempt fails with `scp: not found` on the remote side. Run
-> `apk add --no-cache openssh-client-default` on the VM first (§4.2 installs
-> it anyway, but that's inside `build-template.sh`, which hasn't run yet at
-> this point).
->
-> **Even then, use `scp -O`.** OpenSSH 9.0+ (the default on most systems
-> since 2022) makes `scp` try the SFTP protocol first, which needs
-> `/usr/lib/ssh/sftp-server` on the target — that binary ships with
-> `openssh-server`, not `openssh-client`, and this project never installs an
-> SSH server other than dropbear. `-O` forces the legacy SCP protocol, which
-> is a plain command dropbear runs like any other and works fine once `scp`
-> exists on the VM.
-
-From the machine hosting the project files, SCP them onto the VM. Adjust paths to match your source:
-
-```sh
-# From your workstation:
-scp -O node/scripts/register.sh    root@<VM_IP>:/usr/local/bin/mesh-probe/
-scp -O node/scripts/test-cycle.sh  root@<VM_IP>:/usr/local/bin/mesh-probe/
-scp -O node/scripts/test-status.sh root@<VM_IP>:/usr/local/bin/mesh-probe/
-scp -O node/scripts/setup.sh       root@<VM_IP>:/usr/local/bin/mesh-probe/
-scp -O node/config.sample           root@<VM_IP>:/etc/mesh-probe/config.sample
-scp -O node/services/iperf3.initd  root@<VM_IP>:/etc/init.d/iperf3
-scp -O node/services/smbd.initd    root@<VM_IP>:/etc/init.d/mesh-probe-smbd
-scp -O node/services/smb.conf      root@<VM_IP>:/etc/samba/smb.conf
-scp -O node/services/smtpd.initd   root@<VM_IP>:/etc/init.d/mesh-probe-smtpd
-scp -O node/services/smtpd.conf    root@<VM_IP>:/etc/smtpd/smtpd.conf
-scp -O node/services/mesh-probe-httpd.conf root@<VM_IP>:/etc/httpd.conf
-scp -O node/services/login-status.sh root@<VM_IP>:/etc/profile.d/mesh-probe-status.sh
-scp -O node/services/crontab       root@<VM_IP>:/etc/mesh-probe/crontab
-ssh root@<VM_IP> 'chmod +x /usr/local/bin/mesh-probe/*.sh && ln -sf /usr/local/bin/mesh-probe/test-status.sh /usr/local/bin/test-status'
-```
-
-`test-status.sh` is not part of the agent self-update manifest (only
-`test-cycle.sh` and `register.sh` are — see CLAUDE.md's Agent self-update
-section), so on a node built before it existed, this SCP-and-symlink step is
-the way to get it there without a template rebuild.
-
-> **Do not copy the crontab onto `/etc/crontabs/root`.** That replaces root's
-> crontab wholesale and destroys Alpine's `run-parts` entries, which are what
-> drive `/etc/periodic/*` — including the daily logrotate run. The disk then
-> fills with rotation installed but never triggered. `setup.sh` merges the
-> mesh-probe block into the existing crontab instead; let it. (CLAUDE.md
-> constraint 12.)
-
-### A.3 Create the Configuration File
-
-```sh
-cp /etc/mesh-probe/config.sample /etc/mesh-probe/config
-vi /etc/mesh-probe/config
-```
-
-Set the required values:
-
-```sh
-HUB_URL="http://<hub-ip>"
-GROUP_NAME="site-a"
-SUBNET="10.1.1.0/24"
-```
-
-> **Note:** For the golden image, you can leave placeholder values here. Each clone will need its own `GROUP_NAME` and `SUBNET`.
-
-### A.4 Set Permissions and Run Setup
-
-```sh
-chmod +x /usr/local/bin/mesh-probe/*.sh
-chmod +x /etc/init.d/iperf3
-chmod +x /etc/init.d/mesh-probe-smbd
-chmod +x /etc/init.d/mesh-probe-smtpd
-/usr/local/bin/mesh-probe/setup.sh
-```
-
-### A.5 Enable Services in OpenRC
-
-```sh
-rc-update add iperf3 default
-rc-update add crond default
-```
-
-> `mesh-probe-smbd` and `mesh-probe-smtpd` are not enabled here. Like `iperf3` under
-> `ENABLE_IPERF`, `setup.sh` only `rc-update add`s each when its
-> `ENABLE_SMB`/`ENABLE_SMTP` flag is `true` in the config — `build-template.sh`
-> installs the packages and service files but leaves both off by default
-> (CLAUDE.md test-type section).
-
-> **Alpine quirk:** Alpine uses OpenRC, not systemd. Services are managed with `rc-service <name> start|stop|restart` and enabled at boot with `rc-update add <name> <runlevel>`. The `default` runlevel is equivalent to systemd's multi-user target.
-
-Start the services now to verify:
-
-```sh
-rc-service iperf3 start
-rc-service crond start
-```
-
-### A.6 Set Up the Identity Web Page
-
-BusyBox httpd serves a simple page that identifies this node to its peers:
-
-```sh
-cat > /var/www/localhost/htdocs/index.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head><title>Mesh Probe</title></head>
-<body>
-<h1>Mesh Probe Node</h1>
-<p>Group: PLACEHOLDER</p>
-<p>Subnet: PLACEHOLDER</p>
-</body>
-</html>
-EOF
-```
-
-The `setup.sh` script or a first-boot script should populate the actual values from `/etc/mesh-probe/config`.
-
-Start httpd:
-
-```sh
-rc-service mesh-probe-httpd start
-rc-update add mesh-probe-httpd default
-```
-
-The service is `mesh-probe-httpd`, not `httpd` — `rc-update add httpd` enables a
-service that does not exist, and the web server then fails to come back after a
-reboot, silently breaking every HTTP test in the mesh.
-
-### A.7 Verify
-
-```sh
-# Check services are running
-rc-status
-
-# Test local HTTP
-curl -s http://localhost/
-
-# Test iperf3 is listening
-iperf3 -c 127.0.0.1 -t 1
-
-# If ENABLE_SMB=true, test smbd is listening
-smbclient -N //127.0.0.1/labshare -c 'get probe.bin /dev/null'
-
-# loss test (always on, no flag) -- confirm fping actually landed
-fping -c 3 127.0.0.1
-
-# If ENABLE_SMTP=true, test smtpd is listening and safe
-smtpd -n -f /etc/smtpd/smtpd.conf     # config parses
-grep -n relay /etc/smtpd/smtpd.conf   # must be comments only
-printf 'EHLO test\r\nQUIT\r\n' | nc -w 3 127.0.0.1 25
-
-# Check cron is loaded
-crontab -l
-```
-
----
-
-## Appendix B: Manual Hub Configuration (reference only)
-
-> **Superseded by `hub/build-template.sh`.** Copy `hub/` to the VM and run that
-> script: it installs the packages, populates `/opt/mesh-probe-hub/`, writes
-> `hub.env` and `/etc/init.d/mesh-probe-hub`, installs `set-static-ip`, sets the
-> lab credentials, and enables the hub, `chronyd`, `open-vm-tools` and dropbear.
-> `DEPLOYMENT.md` stage 2 is the current procedure.
->
-> **Do not follow the steps below as a build.** They predate the script, they
-> omit `hub.env`, `set-static-ip`, the credentials and the service enables,
-> and B.5's init script is wrong (see the note there). This appendix exists
-> only so you can read what the script does, or troubleshoot a half-built hub.
-
-Starting from the base VM (or a fresh clone), configure it as the hub.
-
-### B.1 Create Directory Structure
-
-```sh
-mkdir -p /opt/mesh-probe-hub/app
-mkdir -p /opt/mesh-probe-hub/templates
-```
-
-### B.2 Copy Hub Files
-
-> **Same caveat as A.2.** A bare `setup-alpine` install has no `scp`/`sftp`
-> binary at all — `apk add --no-cache openssh-client-default` on the VM
-> first — and once it's there, use `scp -O` (legacy protocol): dropbear has
-> no `sftp-server`, so a modern client's default SFTP-based `scp` fails
-> even though the legacy protocol works fine.
-
-```sh
-# From your workstation:
-scp -O hub/app/__init__.py      root@<HUB_IP>:/opt/mesh-probe-hub/app/
-scp -O hub/app/app.py           root@<HUB_IP>:/opt/mesh-probe-hub/app/
-scp -O hub/app/config.py        root@<HUB_IP>:/opt/mesh-probe-hub/app/
-scp -O hub/app/syslog_server.py root@<HUB_IP>:/opt/mesh-probe-hub/app/
-scp -O hub/app/pathchange.py    root@<HUB_IP>:/opt/mesh-probe-hub/app/
-scp -O hub/templates/dashboard.html root@<HUB_IP>:/opt/mesh-probe-hub/templates/
-scp -O hub/templates/syslog.html    root@<HUB_IP>:/opt/mesh-probe-hub/templates/
-scp -O hub/requirements.txt     root@<HUB_IP>:/opt/mesh-probe-hub/
-scp -O hub/serve.py             root@<HUB_IP>:/opt/mesh-probe-hub/
-scp -O hub/run.sh               root@<HUB_IP>:/opt/mesh-probe-hub/
-```
-
-`serve.py` is the entrypoint the OpenRC service runs (B.5) — without it the
-service has nothing to start. `app/__init__.py` is empty but must exist, or
-`app.app` is not an importable package. `syslog_server.py` and `syslog.html` are the
-syslog receiver and its viewer (B.7), and they fail very differently if you
-forget one:
-
-- **`syslog_server.py` missing → the hub does not start at all.** `serve.py`
-  imports it at module level, so the service dies with `ModuleNotFoundError`
-  before `main()` runs: no dashboard, no `/register`, no result collection.
-  Copy it alongside `serve.py`, not as an optional extra.
-- **`pathchange.py` missing → same failure.** `app.py` imports it at module
-  level (`from . import pathchange`) for traceroute path-change detection, so
-  a missing file is the identical `ModuleNotFoundError` at startup, not a
-  degraded dashboard.
-- **`syslog.html` missing → only `/syslog` breaks**, with a template error.
-  Everything else serves normally.
-
-### B.3 Install Python Dependencies
-
-```sh
-cd /opt/mesh-probe-hub
-pip3 install -r requirements.txt --break-system-packages
-```
-
-If `py3-flask` was already installed via apk in step 4.3, the requirements file may have nothing extra to install. Either way, running pip against the requirements file ensures everything is covered.
-
-### B.4 Configure Static IP (Recommended)
-
-The hub needs a stable address so all nodes can reach it. Edit the network configuration:
-
-```sh
-vi /etc/network/interfaces
-```
-
-Replace the DHCP config with a static block:
-
-```
-auto lo
-iface lo inet loopback
-
-auto eth0
-iface eth0 inet static
-    address 10.0.0.10/24
-    gateway 10.0.0.1
-```
-
-Set DNS:
-
-```sh
-echo "nameserver 10.0.0.1" > /etc/resolv.conf
-```
-
-Restart networking:
-
-```sh
-rc-service networking restart
-```
-
-> **Alternative:** If your lab DHCP server supports reservations, you can keep DHCP on the hub and create a reservation by MAC address. This avoids hardcoding the IP in the VM.
-
-### B.5 Create an OpenRC Service for the Hub
-
-Create the init script:
-
-> **This snippet is wrong and kept only to be recognisable.** It runs
-> `run.sh`, the foreground debug launcher. What `build-template.sh` actually
-> installs is `command="/usr/bin/python3"` with
-> `command_args="/opt/mesh-probe-hub/serve.py"`, plus a `start_pre` that sources
-> `hub.env`. Going through `run.sh` skips `serve.py`'s runtime `HUB_PORT`
-> handling, so a port set in `hub.env` is ignored.
-
-```sh
-cat > /etc/init.d/mesh-probe-hub << 'EOF'
-#!/sbin/openrc-run
-
-name="mesh-probe-hub"
-description="Mesh Probe Hub Dashboard"
-command="/opt/mesh-probe-hub/run.sh"
-command_background=true
-pidfile="/run/${RC_SVCNAME}.pid"
-output_log="/var/log/mesh-probe-hub.log"
-error_log="/var/log/mesh-probe-hub.log"
-
-depend() {
-    need net
-    after firewall
-}
-EOF
-
-chmod +x /etc/init.d/mesh-probe-hub
-chmod +x /opt/mesh-probe-hub/run.sh
-```
-
-Enable and start:
-
-```sh
-rc-update add mesh-probe-hub default
-rc-service mesh-probe-hub start
-```
-
-### B.6 Test the Dashboard
-
-From the hub VM itself:
-
-```sh
-curl -s http://localhost/
-```
-
-From another machine on the network, open `http://<hub-ip>` in a browser. You should see the dashboard (initially with no test results).
-
-### B.7 Verify the Syslog Receiver
-
-The hub listens for RFC3164 syslog (including the Cisco-style origin-id and
-`%FAC-SEV-MNEMONIC` framing many network vendors emit) on UDP/514 and stores
-it in the same database as the test results, so a red cell in the matrix can
-be read against what a network device on the path said at that moment. This
-is entirely optional — nothing in the mesh requires any device to log here.
-
-Nothing needs enabling — `serve.py` starts the listener. Confirm it bound:
-
-```sh
-rc-service mesh-probe-hub restart
-grep syslog /var/log/mesh-probe-hub.log     # or the service's stdout
-```
-
-Expect `[syslog] listening on 0.0.0.0:514 (cap 300000 rows)`. If instead you
-see `[syslog] not listening on 0.0.0.0:514 — ...`, the usual causes are the
-service not running as root (514 is privileged) or something else already bound
-to it. The hub keeps serving results either way — a syslog failure is never
-allowed to take the collector down with it.
-
-Send a test message from the hub itself:
-
-```sh
-# BusyBox's logger has no network option and util-linux is not installed, so
-# send the packet with the Python that is already here for the hub itself.
-python3 -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b'<190>1: SW-TEST: %SYS-5-CONFIG_I: hello from the hub', ('127.0.0.1', 514))"
-curl -s 'http://localhost/api/syslog?minutes=5'
-```
-
-You should get one row back, with `host` `SW-TEST` and `mnemonic`
-`%SYS-5-CONFIG_I`. An empty array means the packet was sent but not stored —
-check the listener line above rather than the device config.
-
-If the lab includes network devices you want to correlate against, point any
-of them at the hub the same way you would any syslog server, e.g.:
+Point devices at `<hub-ip>`, UDP 514, RFC3164. For example (syntax varies by
+vendor):
 
 ```
 logging host <hub-ip>
@@ -1183,36 +304,138 @@ logging trap informational
 service timestamps log datetime msec show-timezone
 ```
 
-(exact syntax depends on the device; the hub only needs RFC3164/UDP on 514).
+To test from the hub itself (BusyBox `logger` can't send to the network):
 
-Open `http://<hub-ip>/syslog` and confirm messages appear. Filters are window,
-sender, severity and a substring search; `severity=4` means *warning or worse*,
-matching how most devices' own logging-severity filters read. Lines the
-parser could not read have no severity and stay visible under every severity
-filter, by design.
+```sh
+python3 -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b'<190>1: SW-TEST: %SYS-5-CONFIG_I: hello from the hub', ('127.0.0.1', 514))"
+curl -s 'http://localhost/api/syslog?minutes=5'
+```
 
-The header shows the hub's clock state from `chronyc tracking` (green when
-disciplined, amber on the `local stratum 10` fallback or >100 ms out, red when
-unsynchronised). It is there because the correlation links depend on it: a
-±5 min window pinned around a test result is only as good as the clock that
-stamped it. `chronyd` is installed and enabled by `build-template.sh`; if the
-indicator reads "clock: unknown", check `rc-service chronyd status`.
+You should get one row with host `SW-TEST`. If `/var/log/mesh-probe-hub.log`
+doesn't show `[syslog] listening on ...:514`, the port was taken or the hub
+isn't running as root. The hub keeps collecting results either way.
 
-From the dashboard, clicking a matrix cell now gives a `syslog ±5 min` link per
-test card, pinned to that sample, plus per-group links in the pair header.
-Those filter on the device's *syslog* hostname — the name it puts in its own
-messages — so if a group link is empty while the plain window link shows the
-message, that device logs under a different name than the node's
-`guestinfo.meshprobe.group` value. Match the names on the device side (many let you
-set a logging origin-id or hostname) if you want those links to line up.
+On `http://<hub-ip>/syslog` you can filter by time, sender, severity and
+text. `severity=4` means warning or worse. Lines the hub couldn't parse have
+no severity and always show.
 
-Two things worth knowing before you rely on it:
+The header shows the hub clock's state: green when synced, amber when
+running on its own clock or >100 ms off, red when unsynced. The ±5 min
+links from the dashboard depend on this clock.
 
-- **It is not an audit trail.** UDP syslog is lossy and unauthenticated —
-  anything that can reach the segment can inject messages. Treat it as a
-  troubleshooting aid.
-- **It is capped by rows, not time** (`HUB_SYSLOG_MAX_ROWS`, default 300000).
-  A device left at debug level will roll the window shorter than you expect;
-  that is the cap doing its job, not lost messages.
+On the dashboard, each test result links to syslog from ±5 min around it,
+and each pair has links filtered by group. Those filter on the hostname the
+device puts in its messages. If a group link is empty but the plain link
+shows the message, the device logs under a different name than the group.
 
-To disable it entirely, set `HUB_SYSLOG_ENABLED=false` in `hub.env`.
+Keep in mind:
+
+- UDP syslog is lossy and anyone on the network can fake it. Use it for
+  troubleshooting, not as an audit trail.
+- It is capped at `HUB_SYSLOG_MAX_ROWS` (300000) rows, not by time. A
+  chatty device shortens the history.
+- `HUB_SYSLOG_ENABLED=false` in `hub.env` turns it off.
+
+---
+
+## 7. Troubleshooting
+
+### Node can't reach the hub
+
+```sh
+ip addr show eth0
+ip route
+ping -c 2 <gateway-ip>
+ping -c 2 <hub-ip>
+curl -v http://<hub-ip>/ 2>&1 | head -20
+```
+
+Usual causes: wrong port group, no route between the subnets, or the hub
+isn't running (`rc-service mesh-probe-hub status` on the hub).
+
+### No DHCP address
+
+```sh
+udhcpc -i eth0
+cat /etc/network/interfaces
+```
+
+Usual causes: no DHCP pool on the subnet, or wrong port group. If the subnet
+really has no DHCP, run `setup.sh` at the console: it asks for a static IP.
+The zero-touch path can't ask, so it leaves the node unconfigured.
+
+### Tests failing
+
+Run a cycle by hand, or test one service against a peer:
+
+```sh
+/usr/local/bin/mesh-probe/test-cycle.sh
+curl -s http://<peer-ip>/
+ssh -i /etc/mesh-probe/id_mesh_probe root@<peer-ip> echo ok
+iperf3 -c <peer-ip> -t 2
+smbclient -N //<peer-ip>/labshare -c 'get probe.bin /dev/null'
+fping -c 5 <peer-ip>
+printf 'EHLO test\r\nQUIT\r\n' | nc -w 3 <peer-ip> 25
+traceroute <peer-ip>
+```
+
+Usual causes: the service isn't running on the peer (dropbear,
+`mesh-probe-httpd`, `iperf3`, `mesh-probe-smbd`, `mesh-probe-smtpd`), or a
+firewall on the path blocks the port.
+
+### Dashboard doesn't load
+
+On the hub:
+
+```sh
+rc-service mesh-probe-hub status
+tail -50 /var/log/mesh-probe-hub.log
+netstat -tlnp | grep ':80 '
+```
+
+To see startup errors directly, stop the service and run it in the
+foreground: `rc-service mesh-probe-hub stop; cd /opt/mesh-probe-hub && sh run.sh`.
+
+If the log warns that waitress is missing, the hub fell back to Flask's
+single-threaded server and will be slow. Install it with
+`apk add py3-waitress`.
+
+### Services not running after a clone
+
+```sh
+rc-update show default
+rc-status -a
+rc default          # start everything in the default runlevel
+```
+
+OpenRC service errors go to `/var/log/messages`.
+
+### Alpine basics
+
+- The shell is BusyBox `ash`, not bash.
+- Packages: `apk update`, `apk add <pkg>`, `apk del <pkg>`, `apk search <term>`.
+- Services: `rc-service <svc> start|stop|restart|status`,
+  `rc-update add|del <svc> default`.
+
+---
+
+## 8. No GitHub access
+
+If a VM can reach the Alpine mirror but not GitHub, copy the repo over with
+scp instead of the download command.
+
+A fresh Alpine install with dropbear has no `scp` binary, so install one on
+the VM first:
+
+```sh
+apk add --no-cache openssh-client-default
+```
+
+Then copy from your workstation with `scp -O`. The `-O` matters: modern scp
+uses SFTP by default, and dropbear has no SFTP server.
+
+```sh
+scp -O -r mesh-probe root@<vm-ip>:/root/
+```
+
+Then run `sh /root/mesh-probe/install.sh` on the VM.

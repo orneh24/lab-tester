@@ -1,136 +1,96 @@
-# Mesh-Probe — Quick Start
+# Mesh Probe — Reference
 
-One page, for an experienced sysadmin who wants the commands and reference
-tables, not the tutorial. Full rationale: `CLAUDE.md`. Full checklist with
-verification steps: `DEPLOYMENT.md`. Step-by-step detail: `BUILD_GUIDE.md`.
+Commands and tables for someone who already knows the setup. Deploy steps:
+the [README quick start](../README.md#quick-start). Checklist with
+verification: `DEPLOYMENT.md`. Design: `CLAUDE.md`.
 
-Out of scope: the network between nodes (routers/switches/firewalls) —
-that's a separate project. This assumes the network already exists and is
+The network between nodes is out of scope. This assumes it exists and is
 reachable.
-
-## Deploy
-
-Four separate steps, run on different VMs — copy-paste each block onto the
-VM it names, not all at once.
-
-**1. Base VM** — install Alpine, then run this once before cloning it in
-vCenter into the two VMs below:
-
-```sh
-wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe
-```
-
-**2. Hub VM** (the clone that becomes the hub — build this first, its IP
-gets baked into the node image):
-
-```sh
-sh /root/mesh-probe/install.sh hub -y   # or: sh hub/build-template.sh directly
-set-static-ip <hub-ip>/<cidr> <gateway> [dns] [hostname]   # or guestinfo.hub.ip/.gateway pre-boot
-rc-service networking restart
-rc-service mesh-probe-hub start
-```
-
-**3. Node golden image** (the other clone, kept as a template — not a
-deployed node itself):
-
-```sh
-sh /root/mesh-probe/install.sh node -y   # or: sh node/build-template.sh directly
-vi /etc/mesh-probe/config   # HUB_URL, GROUP_NAME required; SUBNET auto-derives from DHCP
-/usr/local/bin/mesh-probe/setup.sh
-# verify it registers, THEN undo that (it recreated the config and
-# hostname the build script had just cleared) before sealing the image:
-rm -f /etc/mesh-probe/config /etc/mesh-probe/config.bak-* \
-      /etc/mesh-probe/.firstboot-done /etc/mesh-probe/.setup-done
-printf 'mesh-probe-template\n' > /etc/hostname
-# now shut down, convert to vCenter template
-```
-
-**4. Each deployed node** (every clone made from the golden image above) —
-set a unique hostname, then either let `node-setup.sh` prompt at the next
-login, or run it (or `register.sh`) by hand:
-
-```sh
-/usr/local/bin/mesh-probe/register.sh
-```
-
-`install.sh` (repo root, run interactively with no `-y`) asks whether a
-fresh base VM becomes a hub or a node and refuses outright on a VM that's
-already configured — re-running `build-template.sh` there wipes the
-existing config/hostname or the hub's database.
-
-Duplicate hostnames silently collide (`endpoints.hostname` is the primary
-key) — that's the one per-clone step that must not be skipped.
 
 ## Ports and services
 
 | What | Where | Port |
 |---|---|---|
 | Dashboard / API | hub, `mesh-probe-hub` (waitress) | 80 |
-| Syslog receiver (optional, UDP) | hub, same process, daemon thread | 514 |
+| Syslog receiver (optional, UDP) | hub, same process | 514 |
 | HTTP test target | node, `mesh-probe-httpd` | 80 |
 | SSH test target | node, dropbear | 22 |
 | SMB test target (opt-in) | node, `mesh-probe-smbd` | 445 |
 | SMTP test target (opt-in) | node, `mesh-probe-smtpd` | 25 |
-| iperf3 (opt-in) | node | 5201 |
+| iperf3 (opt-in) | node, `iperf3` | 5201 |
 
-Hub files: app at `/opt/mesh-probe-hub/`, env at
-`/opt/mesh-probe-hub/hub.env`, DB at `/var/lib/mesh-probe/hub.db`, login
-stamp at `/etc/mesh-probe-hub/.setup-done`.
-Node files: scripts at `/usr/local/bin/mesh-probe/` (`node-setup.sh` also
-symlinked onto PATH), config at `/etc/mesh-probe/config`, login stamp at
-`/etc/mesh-probe/.setup-done` — `cat` it to see why the login prompt has
-gone quiet (`configured` / `skipped` / `configured (guestinfo)` /
-`configured (existing config)`).
+## Files
+
+| | Hub | Node |
+|---|---|---|
+| Code | `/opt/mesh-probe-hub/` | `/usr/local/bin/mesh-probe/` |
+| Config | `/opt/mesh-probe-hub/hub.env` | `/etc/mesh-probe/config` |
+| Data | `/var/lib/mesh-probe/hub.db` | — |
+| Logs | `/var/log/mesh-probe-hub.log` | `/var/log/mesh-probe/` |
+| Login-prompt stamp | `/etc/mesh-probe-hub/.setup-done` | `/etc/mesh-probe/.setup-done` |
+
+The stamp file says why the login prompt stopped asking: `configured`,
+`skipped`, `configured (guestinfo)` or `configured (existing config)`.
+Delete it, or run `node-setup.sh --force` / `hub-setup.sh --force`, to be
+asked again.
 
 ## Hub config (`hub.env`)
 
+Restart the hub after editing: `rc-service mesh-probe-hub restart`.
+
 | Key | Default | Notes |
 |---|---|---|
-| `HUB_PORT` | 80 | read at runtime by `serve.py` — don't move into the initd `command_args` |
-| `HUB_DB_PATH` | `hub.db` | set explicitly; importing `app.app` runs `init_db()` at module scope |
-| `HUB_RESULT_RETENTION_HOURS` | 24 | swept on each `POST /results`, no cron |
-| `HUB_STALE_ENDPOINT_HOURS` | 6 | endpoints unseen this long are dropped from `/endpoints` |
+| `HUB_PORT` | 80 | |
+| `HUB_DB_PATH` | `/var/lib/mesh-probe/hub.db` | |
+| `HUB_RESULT_RETENTION_HOURS` | 24 | old results pruned on each result push |
+| `HUB_STALE_ENDPOINT_HOURS` | 6 | nodes unseen this long are dropped |
 | `HUB_SYSLOG_ENABLED` | true | |
 | `HUB_SYSLOG_BIND` | `0.0.0.0` | |
 | `HUB_SYSLOG_PORT` | 514 | needs root; use >1024 for a manual `run.sh` |
-| `HUB_SYSLOG_MAX_ROWS` | 300000 | row cap, not time-based |
-| `HUB_BUSY_TIMEOUT_MS` | 5000 | syslog writer and results API share the DB |
-| `HUB_HEALTH_SERVICES` | `mesh-probe-hub,chronyd,dropbear,open-vm-tools,lldpd` | polled for `/api/health` |
-| `MESH_PROBE_ROOT_PASSWORD` | `lab123` | read by `build-template.sh` only, not at runtime |
+| `HUB_SYSLOG_MAX_ROWS` | 300000 | syslog is capped by rows, not time |
+| `HUB_BUSY_TIMEOUT_MS` | 5000 | |
+| `HUB_PATH_CHANGE_ENABLED` | true | log traceroute path changes to syslog |
+| `HUB_HEALTH_SERVICES` | `mesh-probe-hub,chronyd,dropbear,open-vm-tools,lldpd` | shown in Hub Health |
+| `HUB_HEALTH_SERVICE_TIMEOUT_S` | 3 | time limit for each service check in Hub Health |
+
+The root password (`lab123`) is set at build time. Override it with
+`MESH_PROBE_ROOT_PASSWORD` when running either `build-template.sh`.
 
 ## Node config (`/etc/mesh-probe/config`)
 
 | Key | Required | Notes |
 |---|---|---|
 | `HUB_URL` | yes | no trailing slash |
-| `GROUP_NAME` | yes | operator label, clusters the dashboard and filters syslog — no topology meaning |
-| `SUBNET` | no | CIDR; `setup.sh` derives it from the DHCP lease if left blank, prompts only if that also fails |
-| `NODE_HOSTNAME` | no | must be unique across the lab; derived from `GROUP_NAME` plus the node's IP if empty |
-| `DNS_SERVER` | no | unset skips the DNS test entirely |
-| `ENABLE_IPERF` / `ENABLE_SMB` / `ENABLE_SMTP` | no | default false; each starts its own OpenRC service |
-| `AGENT_AUTOUPDATE` | no | default true; self-updates `test-cycle.sh` on each 5-min registration |
+| `GROUP_NAME` | yes | label that groups nodes on the dashboard |
+| `SUBNET` | yes | filled in from the DHCP lease by `setup.sh` |
+| `NODE_HOSTNAME` | no | if empty: `<HOSTNAME_PREFIX>-<group>-<ip>` |
+| `HOSTNAME_PREFIX` | no | default `mp` |
+| `DNS_SERVER` | no | empty skips the DNS test |
+| `DNS_QUERY` | no | default `example.com` |
+| `ENABLE_IPERF` / `ENABLE_SMB` / `ENABLE_SMTP` | no | default false |
+| `AGENT_AUTOUPDATE` | no | default true |
 
-`register.sh` still `exit 1`s on the first of `HUB_URL`/`GROUP_NAME`/`SUBNET`
-that's empty *in the config file* at cron time — `setup.sh`'s derivation just
-means an operator no longer has to supply `SUBNET` by hand. A node still
-missing one (e.g. no DHCP lease when `setup.sh` ran) just never appears;
-there's no error to see.
+If `HUB_URL`, `GROUP_NAME` or `SUBNET` is empty, `register.sh` exits and the
+node never appears on the hub. There is no other error.
+
+After editing, re-run `/usr/local/bin/mesh-probe/setup.sh`. It keeps the
+config and starts any service you enabled.
 
 ## Verify
 
 ```sh
-curl http://<hub-ip>/api/health         # never 500s — check the body, not just the code
-curl http://<hub-ip>/api/time           # chrony tracking state
-curl http://<hub-ip>/endpoints          # who's registered
+curl http://<hub-ip>/api/health         # always 200; read the body
+curl http://<hub-ip>/api/time           # clock (chrony) state
+curl http://<hub-ip>/endpoints          # registered nodes
 curl 'http://<hub-ip>/api/results?minutes=5'
-curl 'http://<hub-ip>/api/syslog?minutes=5'   # [] is fine; an error means the listener didn't start
+curl 'http://<hub-ip>/api/syslog?minutes=5'   # [] is fine; an error means the listener is down
 ```
 
 Dashboard: `http://<hub-ip>/`. Syslog viewer: `http://<hub-ip>/syslog`.
 
 ## Routine admin
 
-**Static targets** (gateways, loopbacks, outside hosts — no agent to install):
+**Static targets** (no agent to install):
 
 ```sh
 curl -X POST http://<hub-ip>/targets -H 'Content-Type: application/json' \
@@ -139,34 +99,25 @@ curl http://<hub-ip>/targets
 curl -X DELETE http://<hub-ip>/targets/gw-a
 ```
 
-Valid test types: `http ssh traceroute pmtu dns iperf3 smb loss smtp`. Only
-declare what the target actually answers — a loopback has no HTTP server.
+Test names: `http ssh traceroute pmtu dns iperf3 smb loss smtp`. List only
+what the target answers; a loopback has no web server.
 
-**Point a network device's syslog at the hub:** UDP/514, RFC3164, that's it.
-Point its NTP at real upstream, not the hub — the hub disciplines its own
-clock only, it serves time to nobody.
+**Send a device's syslog to the hub:** UDP/514, RFC3164. Point the device's
+NTP at a real server, not the hub; the hub serves time to nobody.
 
-**A node stopped reporting:** amber in the Endpoints list (`last_seen` >5
-min), matrix cells fade grey (not red — grey means no data, not failure).
-Check that node's `/var/log/mesh-probe/` before the network.
+**A node stopped reporting:** it turns amber in the Endpoints list after 5
+minutes, and its matrix cells go grey (no data, not failure). Check the
+node's `/var/log/mesh-probe/` before the network.
 
-**Remove a dead endpoint:** `curl -X DELETE http://<hub-ip>/endpoints/<hostname>`
+**Remove a dead node:** `curl -X DELETE http://<hub-ip>/endpoints/<hostname>`
 
-**Enable an optional test on a node already deployed:** edit
-`/etc/mesh-probe/config`, restart cron isn't needed (next 60s cycle picks it
-up), but start the matching service by hand if it isn't running yet
-(`rc-service mesh-probe-smbd start` / `mesh-probe-smtpd start`).
-
-**Hub or node logs:** hub under OpenRC's log for `mesh-probe-hub`; nodes at
-`/var/log/mesh-probe/`.
+**See one node's results from the node itself:** `test-status` (`-f` to
+follow, `-n N` for history).
 
 ## Traps
 
 | Trap | Symptom |
 |---|---|
-| Golden image built before the hub had its final IP | every clone has the wrong `HUB_URL` |
-| Duplicate node hostname | one node silently overwrites another's registration |
-| Verified registration on the golden image, sealed it without re-cleaning | every clone starts with that verification run's real hostname/`GROUP_NAME`/`SUBNET` baked in — same collision as above, from clone one |
-| Golden image sealed with `/etc/mesh-probe/.setup-done` present | every clone's login prompt stays silent forever — the node just never configures and never appears, no error anywhere |
-| `ENABLE_SMB`/`ENABLE_SMTP` set but service never started | test never runs, no red cell — just absent |
-| Static target declares a test it can't answer | permanent red for that pair |
+| Node template configured or tested before sealing | every clone starts with the same hostname, and the login prompt never appears |
+| Two nodes with the same hostname | one overwrites the other on the hub |
+| Static target lists a test it can't answer | that cell is always red |
