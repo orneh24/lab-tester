@@ -1,4 +1,4 @@
-"""Configuration for the lab-tester hub."""
+"""Configuration for the mesh-probe hub."""
 
 import os
 
@@ -38,7 +38,7 @@ BUSY_TIMEOUT_MS = int(os.environ.get("HUB_BUSY_TIMEOUT_MS", "5000"))
 # "unknown" rather than failing the whole endpoint.
 HEALTH_SERVICES = [
     s.strip() for s in os.environ.get(
-        "HUB_HEALTH_SERVICES", "lab-tester-hub,chronyd,dropbear,open-vm-tools,lldpd"
+        "HUB_HEALTH_SERVICES", "mesh-probe-hub,chronyd,dropbear,open-vm-tools,lldpd"
     ).split(",") if s.strip()
 ]
 HEALTH_SERVICE_TIMEOUT_S = int(os.environ.get("HUB_HEALTH_SERVICE_TIMEOUT_S", "3"))

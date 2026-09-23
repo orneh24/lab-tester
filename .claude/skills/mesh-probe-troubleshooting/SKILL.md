@@ -1,10 +1,10 @@
 ---
-name: lab-tester-troubleshooting
-description: Diagnosing lab-tester failures end to end — blank dashboard cells, missing endpoints, one-way test failures, and separating a genuine network problem from a broken node. Read when results look wrong rather than when code is being changed.
-origin: lab-tester
+name: mesh-probe-troubleshooting
+description: Diagnosing mesh-probe failures end to end — blank dashboard cells, missing endpoints, one-way test failures, and separating a genuine network problem from a broken node. Read when results look wrong rather than when code is being changed.
+origin: mesh-probe
 ---
 
-# Lab-Tester Troubleshooting
+# Mesh-Probe Troubleshooting
 
 The system reports failures it cannot explain. This is the order to work through them so that a lab problem (the interesting case) is not confused with a harness problem (the common case).
 
@@ -19,7 +19,7 @@ The system reports failures it cannot explain. This is the order to work through
 
 1. **Is the endpoint registered?** `curl http://<hub>/endpoints` — check the node is listed and `last_seen` is recent. Absent or stale → registration problem, not connectivity.
 2. **Is data arriving?** `curl 'http://<hub>/api/results?minutes=10'`. Rows present but the matrix looks empty → time-window/timestamp problem, not a network problem.
-3. **Is the cycle running?** On the node: `tail /var/log/lab-tester/test-cycle.log` and `tail /var/log/lab-tester/register.log`.
+3. **Is the cycle running?** On the node: `tail /var/log/mesh-probe/test-cycle.log` and `tail /var/log/mesh-probe/register.log`.
 4. **Only then** treat it as a genuine network problem between the nodes.
 
 ## Missing Endpoint
@@ -27,7 +27,7 @@ The system reports failures it cannot explain. This is the order to work through
 - Duplicate hostname — two clones with the same name overwrite each other in `endpoints`. Check for a `last_seen` that jumps between IPs.
 - DHCP lease not obtained: `ip -4 -o addr show scope global` returns nothing → `register.sh` exits before POSTing.
 - `HUB_URL` wrong or has a trailing slash; hub unreachable from that subnet.
-- Config missing: `/etc/lab-tester/config` absent → both scripts exit 1 immediately.
+- Config missing: `/etc/mesh-probe/config` absent → both scripts exit 1 immediately.
 - Stale entry from a decommissioned clone: `DELETE /endpoints/<hostname>`.
 
 ## "Not Reporting" — and where amber actually lives
@@ -68,7 +68,7 @@ Go to the node logs before looking at the network.
 
 A failing direction with a working reverse points at the *target*, not the path:
 
-- Target's server is down — dropbear, busybox httpd, iperf3, or (if `ENABLE_SMB=true`/`ENABLE_SMTP=true`) `lab-smbd`/`lab-smtpd` not started. Verify locally on the target first: `nc -z <ip> 22 25 80 445 5201` from a neighbour.
+- Target's server is down — dropbear, busybox httpd, iperf3, or (if `ENABLE_SMB=true`/`ENABLE_SMTP=true`) `mesh-probe-smbd`/`mesh-probe-smtpd` not started. Verify locally on the target first: `nc -z <ip> 22 25 80 445 5201` from a neighbour.
 - Target firewalled at the host level (Alpine default has none — if `iptables` rules exist, someone added them).
 - If both directions fail for every pair crossing one point in the network, and traceroute dies at that hop, that is a real network problem — outside this harness, and the concern of whatever project owns the routing/switching in the lab.
 - Before concluding it's the network, check `lldpcli show neighbors` on the node (always-on, not gated) — a node on the wrong vSwitch port group registers and often still gets a DHCP lease, but is plugged into the wrong place entirely.
@@ -79,7 +79,7 @@ Its `success` field is `true` on any reply at all — a pair silently losing 30%
 
 ## `smtp` Can Pass While Being Rewritten
 
-Its `success` field gates on the banner + `EHLO` response only — a real relay correctly rejecting the probe's `RCPT TO:<probe@lab.invalid>` with `550` still reads `success: true`, and that's expected, not a bug to chase. The signal worth reading is in `output`: if the EHLO capability list comes back with tokens masked as runs of `X` (e.g. `250-XXXXXXXX` instead of `250-STARTTLS`), a device on the path — an SMTP ALG or ESMTP inspection engine, common on firewalls and NAT gateways — is rewriting the session in flight, not blocking it. That's a `success: true` row that still deserves attention. This is exactly the class of fault `smtp` exists to catch: `smb`/`loss`/`pmtu` all catch a path that drops or degrades traffic, but nothing else here catches one that silently edits it.
+Its `success` field gates on the banner + `EHLO` response only — a real relay correctly rejecting the probe's `RCPT TO:<probe@mesh-probe.invalid>` with `550` still reads `success: true`, and that's expected, not a bug to chase. The signal worth reading is in `output`: if the EHLO capability list comes back with tokens masked as runs of `X` (e.g. `250-XXXXXXXX` instead of `250-STARTTLS`), a device on the path — an SMTP ALG or ESMTP inspection engine, common on firewalls and NAT gateways — is rewriting the session in flight, not blocking it. That's a `success: true` row that still deserves attention. This is exactly the class of fault `smtp` exists to catch: `smb`/`loss`/`pmtu` all catch a path that drops or degrades traffic, but nothing else here catches one that silently edits it.
 
 ## Reading Traceroute Output
 
@@ -129,5 +129,5 @@ unauthenticated. Use it to corroborate a failure window, never to rule one out.
 
 ## Related Skills
 
-- lab-tester-hub-api
-- lab-tester-node
+- mesh-probe-hub-api
+- mesh-probe-node

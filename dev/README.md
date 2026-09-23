@@ -33,7 +33,7 @@ dev/run-node-cycle.sh dev-node-c 10.99.1.13 site-b
 Each call runs the actual `register.sh` then `test-cycle.sh` against the
 local hub, so this is the tool to reach for when you've changed either
 script and want to see it work end to end — including the console table,
-`/run/lab-tester/last-cycle.txt`-equivalent snapshot, and `test-status.sh`,
+`/run/mesh-probe/last-cycle.txt`-equivalent snapshot, and `test-status.sh`,
 all exercised for real.
 
 One workstation plays many nodes: identity comes from a `hostname` shim
@@ -43,7 +43,7 @@ node scripts call — nothing about the scripts themselves changes.
 Two edits, and only two, are made to scratch copies before running (same
 precedent the `regression-tester` agent uses for its own live-hub runs):
 `CONFIG` in both scripts, and — `test-cycle.sh` only — `LOCK_DIR` and
-`TRACEROUTE_STAMP`. All three are OS-root paths (`/etc/lab-tester/...`,
+`TRACEROUTE_STAMP`. All three are OS-root paths (`/etc/mesh-probe/...`,
 `/run/...`) that don't exist off a real Alpine node. `SNAPSHOT_FILE` needs no
 edit — it already honors an env override, which this also happens to prove.
 

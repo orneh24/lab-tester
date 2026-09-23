@@ -4,13 +4,13 @@
 # Without this the web server had to be started by hand and did not come
 # back after a reboot, which silently broke every HTTP test in the mesh.
 
-name="lab-httpd"
-description="lab-tester identity web server (busybox httpd)"
+name="mesh-probe-httpd"
+description="mesh-probe identity web server (busybox httpd)"
 
 command="/usr/sbin/httpd"
 command_args="-f -p 80 -h /var/www/localhost/htdocs -c /etc/httpd.conf"
 command_background="yes"
-pidfile="/run/lab-httpd.pid"
+pidfile="/run/mesh-probe-httpd.pid"
 
 depend() {
     need net

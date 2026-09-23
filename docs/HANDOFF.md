@@ -1,4 +1,4 @@
-# Lab-Tester — Session Handoff
+# Mesh-Probe — Session Handoff
 
 Last updated: 2026-09-20. Written so a fresh session on any surface (Claude Code
 in the terminal, the desktop app, claude.ai) can pick up without the prior chat.
@@ -43,6 +43,22 @@ and intent only.
 > sound.
 
 ## Recent changes
+
+**Project renamed lab-tester → mesh-probe (2026-09-23).**
+
+Full rename: install paths, OpenRC services (`mesh-probe-hub`,
+`mesh-probe-httpd`/`-smbd`/`-smtpd`, `mesh-probe-firstboot`), templates,
+guestinfo keys (`guestinfo.lab.*` → `guestinfo.meshprobe.*`), config var
+`LAB_HOSTNAME` → `NODE_HOSTNAME`, build var `LAB_ROOT_PASSWORD` →
+`MESH_PROBE_ROOT_PASSWORD`, the SSH keypair (`id_lab` → `id_mesh_probe`),
+the path-change syslog tag (`%MESHPROBE-5-PATHCHANGE`, host
+`mesh-probe-hub`) and the SMTP probe address (`probe@mesh-probe.invalid`).
+No migration path: VMs built before the rename must be rebuilt from new
+templates, and their vCenter guestinfo keys renamed. An old node pointed at a
+new hub pulls the new `test-cycle.sh`, fails its trial run on the missing
+`/etc/mesh-probe/config`, and restores its `.known-good` copy — so it keeps
+testing, but on old code, until rebuilt. The GitHub repo itself must be
+renamed to `orneh24/mesh-probe` for the documented download command to work.
 
 **Dashboard: Recent Changes / Recent Syslog panels, syslog page nav and controls (2026-09-20).**
 
@@ -91,7 +107,7 @@ session on that VM.
    table (one row per target, one column per always-on test type — H/S/M/L/T)
    to `/dev/console` (`CONSOLE_OUTPUT`, on by default; device configurable via
    `CONSOLE_DEVICE`), in addition to the existing cycle log. Also written to
-   a snapshot file at `/run/lab-tester/last-cycle.txt` so it can be read back
+   a snapshot file at `/run/mesh-probe/last-cycle.txt` so it can be read back
    without re-running a cycle.
 2. **`node/scripts/test-status.sh`** (new) — reads the snapshot by default;
    `-f`/`--follow` tails it live, `-n N` shows the last N cycles from the log.
@@ -159,7 +175,7 @@ computation (no durable record for a pair nobody has open).
 **The honest trade-off, written down in CLAUDE.md's Syslog section:** a
 hub-authored row is the one row in `syslog` that's actually trustworthy, and
 gains no special protection from it — anything on the segment can forge the
-same `host=lab-tester-hub`/`mnemonic=%LABTESTER-5-PATHCHANGE` tag, and
+same `host=mesh-probe-hub`/`mnemonic=%MESHPROBE-5-PATHCHANGE` tag, and
 `GET /api/path-changes` would serve it back. The tag is a label, not a
 boundary; blast radius is bounded (a spurious marker plus a syslog link, no
 `results` row ever altered or lost).
@@ -213,7 +229,7 @@ change to `setup.sh`'s own logic.
 1. **`install.sh`** (new, repo root) — asks whether a fresh Alpine base VM
    becomes a Hub or a Node and runs (or prints, on decline) the matching
    `build-template.sh`. Refuses outright if the VM already looks built into
-   a role (`/usr/local/bin/lab-tester/setup.sh` or `/opt/lab-tester-hub/`
+   a role (`/usr/local/bin/mesh-probe/setup.sh` or `/opt/mesh-probe-hub/`
    present) — both `build-template.sh` scripts are destructive on an
    already-configured system (node: wipes config/hostname; hub: wipes the
    results DB) and their only existing protection, self-deleting after a
@@ -222,7 +238,7 @@ change to `setup.sh`'s own logic.
    it for scripted use.
 2. **`node-setup.sh` + `node/services/login-setup.sh`** — the Node's
    missing half of a pattern the Hub already had. `login-setup.sh` is
-   installed to `/etc/profile.d/lab-tester-node-setup.sh` (same three-layer
+   installed to `/etc/profile.d/mesh-probe-node-setup.sh` (same three-layer
    guard as the Hub's: interactive shell, real tty, stamp file) and invites
    `node-setup.sh` at first login. The wizard collects **no configuration
    values itself** — it only asks `Configure this node now? [Y/n]` and
@@ -230,8 +246,8 @@ change to `setup.sh`'s own logic.
    collection. Keeping collection in one place matters: `firstboot.initd`
    calls only `setup.sh`, so logic added to the wizard instead would be
    invisible on the zero-touch guestinfo path.
-3. **New stamp file `/etc/lab-tester/.setup-done`**, deliberately *not* the
-   existing `/etc/lab-tester/.firstboot-done`. That file has exactly one
+3. **New stamp file `/etc/mesh-probe/.setup-done`**, deliberately *not* the
+   existing `/etc/mesh-probe/.firstboot-done`. That file has exactly one
    writer (`firstboot.initd`) and one meaning ("the zero-touch service
    completed"); if the login wizard also wrote it, declining the prompt with
    "don't ask again" would silently disarm the zero-touch path too — an
@@ -247,9 +263,9 @@ change to `setup.sh`'s own logic.
    (backing it up to `config.bak-<timestamp>`, not deleting) — resetting
    only the wizard's own stamp would have re-run `setup.sh` but silently
    kept the old values, since `setup.sh`'s own idempotency gate is separate
-   ("does `/etc/lab-tester/config` exist").
+   ("does `/etc/mesh-probe/config` exist").
 4. **`node/build-template.sh`'s cleanup** now also clears
-   `/etc/lab-tester/config.bak-*` and `.setup-done`, alongside the existing
+   `/etc/mesh-probe/config.bak-*` and `.setup-done`, alongside the existing
    `config`/`.firstboot-done` clear — the same class of bug fixed earlier
    this session for a different file: a golden image sealed with
    `.setup-done` present would silently silence the login prompt on every
@@ -266,7 +282,7 @@ change to `setup.sh`'s own logic.
    is ever invoked directly from a non-interactive context.
 
 Verified with a scripted walkthrough (patched copies with only
-`/etc/lab-tester(-hub)` paths redirected, diffed against originals to
+`/etc/mesh-probe(-hub)` paths redirected, diffed against originals to
 confirm nothing else changed, stubs for `ip`/`rc-service`/`set-static-ip`/
 `vmware-rpctool` on PATH) covering: the EOF-on-main-prompt case (proves
 `if ! read` over `|| VAR=""` — under the latter, EOF would have driven
@@ -310,12 +326,12 @@ wire-contract change):
    bitwise operators) and only falls through to guestinfo/env/prompt if that
    fails. This closes the gap `HANDOFF.md` flagged 2026-09-10 as "designed,
    never built" (reducing the three required vars, no `subnet_from_cidr()`
-   anywhere) — `guestinfo.lab.subnet` and `SUBNET` are now optional, not
+   anywhere) — `guestinfo.meshprobe.subnet` and `SUBNET` are now optional, not
    required. `register.sh` and the wire contract are unchanged: the config
    file still needs a non-empty value by cron time, only now it's usually
    filled in automatically rather than typed in.
 3. **Fixed a latent `set -e` abort.** `firstboot.initd` only checks
-   `guestinfo.lab.hub_url`/`.group` before invoking `setup.sh`, never
+   `guestinfo.meshprobe.hub_url`/`.group` before invoking `setup.sh`, never
    `.subnet` — so a clone missing just the subnet key hit the subnet prompt
    with stdin redirected from `/dev/null` (deliberate, so firstboot can't
    hang the boot on a prompt nobody will answer). The unguarded `read` there
@@ -346,7 +362,7 @@ Concretely:
 - `test-vm/` renamed to `node/`; "test VM" → "Node" everywhere in docs, UI,
   and agent/skill text.
 - `endpoints.router` renamed to `endpoints.group_name` (wire field `router` →
-  `group_name`, guestinfo key `lab.router` → `lab.group`, config var
+  `group_name`, guestinfo key `lab.router` → `lab.group` (now `meshprobe.group`), config var
   `ROUTER_NAME` → `GROUP_NAME`). A migration in `init_db()` renames the
   column on an existing database. `group_name` is a plain operator-chosen
   label — it clusters nodes on the dashboard and filters syslog by sender,
@@ -356,8 +372,8 @@ Concretely:
   `/snmp/targets` and `/api/snmp*` routes, the "Router SNMP" dashboard panel,
   and all `HUB_SNMP_*`/`HUB_MGMT_IP` config keys. This was device monitoring
   for routers specifically and belongs with the router project now.
-- **Config file download server removed entirely** — `lab-tester-serve`,
-  `serve.initd`/`serve.conf`, `publish-config`, and `/srv/lab-tester-configs`.
+- **Config file download server removed entirely** — `mesh-probe-serve`,
+  `serve.initd`/`serve.conf`, `publish-config`, and `/srv/mesh-probe-configs`.
   This existed only so routers could pull IOS config files from the hub.
 - **PowerCLI router deployment removed** — `deploy/deploy-routers.ps1` and
   `deploy/lab-manifest.sample.ps1` (added earlier the same day, see the
@@ -383,7 +399,7 @@ Concretely:
   `network-bgp-diagnostics`, `network-config-validation`,
   `network-interface-health`, the wireshark/tshark/packet-capture skills,
   the Palo-Alto skill, and the `network-architect`/`network-config-reviewer`/
-  `network-troubleshooter` agents) — none were lab-tester-specific.
+  `network-troubleshooter` agents) — none were mesh-probe-specific.
 - Two dead config keys removed as a side effect of the cleanup:
   `HUB_TEST_INTERVAL`/`HUB_DEBUG` (read, never acted on) and the node's
   `TEST_INTERVAL` (documented as informational-only; the crontab is
@@ -419,7 +435,7 @@ per `DEPLOYMENT.md` stage 1 exactly as before.
 This reopens `docs/HANDOFF.md`'s prior "No vCenter tooling, deliberately"
 decision — the user explicitly asked for PowerCLI. The **manifest** half of
 that entry's reasoning survives: one router identity (VM name, IOS
-`hostname`, the name syslog puts in its own messages, `guestinfo.lab.router`,
+`hostname`, the name syslog puts in its own messages, `guestinfo.meshprobe.router`,
 `snmp_targets.name`) is load-bearing in five places that previously shared
 no single source. Config rendering and hub auto-registration from that same
 manifest remain unbuilt — see "Designed but NOT implemented" below.
@@ -435,7 +451,7 @@ an explicit opt-in, and the client side can't send mail regardless.
 Catches what `smb` can't: a device that *passes* SMTP while *rewriting* it —
 Cisco ESMTP inspection / ASA ESMTP fixup masks unrecognised capability verbs
 (e.g. `STARTTLS`) with runs of `X`. The probe holds a real envelope
-conversation (`EHLO` → `MAIL FROM:<>` → `RCPT TO:<probe@lab.invalid>` →
+conversation (`EHLO` → `MAIL FROM:<>` → `RCPT TO:<probe@mesh-probe.invalid>` →
 `RSET` → `QUIT`) via hand-rolled `nc` (curl was considered and rejected —
 without a real upload it issues `VRFY` instead of `MAIL`/`RCPT`, and its
 exact verb behavior has regressed across versions). `success` gates on the
@@ -451,7 +467,7 @@ this lab has a real NAT/default-route path to the internet
 *does* ship a relay action, so the `cp -f` that installs our own config in
 `build-template.sh` is load-bearing, backed by a build-time grep warning and
 a new regression-tester check (`grep -n relay test-vm/services/smtpd.conf`
-must be comments-only). Own `lab-smtpd` OpenRC service, deliberately not the
+must be comments-only). Own `mesh-probe-smtpd` OpenRC service, deliberately not the
 packaged `opensmtpd-openrc` (bare `smtpd` service name — same collision risk
 `httpd` was, and it would bypass `ENABLE_SMTP` and every safety guard if an
 operator enabled it directly).
@@ -483,8 +499,8 @@ the existing wire contract. Regression suite CLEAR.
    loudly — never a silent bind to the wrong interface. This also gives the
    hub its first real IP→router-name mapping, from each router's own
    `sysName` (see the syslog correlation caveat above).
-3. **Config file download server** — `lab-tester-serve` (busybox httpd),
-   always on, serves `/srv/lab-tester-configs/` read-only on port 8080,
+3. **Config file download server** — `mesh-probe-serve` (busybox httpd),
+   always on, serves `/srv/mesh-probe-configs/` read-only on port 8080,
    bound to every address (deliberately the opposite of SNMP's binding: a
    router pulling a config may not have its management NIC configured yet).
    Directory listing is automatic. `publish-config <file>` on the hub is the
@@ -512,13 +528,13 @@ routes/tables, regression suite CLEAR (22/22 constraints, Tier 2/3, R21/R22):
    memory, disk, uptime. Same never-500 discipline as `/api/time`: every
    check is independently fault-tolerant.
 3. **Hub zero-touch setup** — `guestinfo.hub.ip` / `guestinfo.hub.gateway`,
-   read by a new `lab-tester-hub-firstboot` OpenRC service
+   read by a new `mesh-probe-hub-firstboot` OpenRC service
    (`hub/services/firstboot.initd`), mirroring the test-VM's existing
-   `lab-tester-firstboot`. With neither key present, it stands down (no
+   `mesh-probe-firstboot`. With neither key present, it stands down (no
    reliable tty inside an OpenRC `start()` to prompt from) and
    `hub-setup.sh` prompts interactively at first login instead
    (`hub/services/login-setup.sh` invites it via `/etc/profile.d`).
-4. **`LAB_ROOT_PASSWORD`** — both `build-template.sh` scripts now read this
+4. **`MESH_PROBE_ROOT_PASSWORD`** — both `build-template.sh` scripts now read this
    env var (default `lab123`) instead of hardcoding the root password.
 5. Doc pass: `DEPLOYMENT.md` stages 1/3/6 now point at the config templates
    and the zero-touch/interactive setup options; `README.md` and `CLAUDE.md`
@@ -624,8 +640,8 @@ but **nothing here works today**:
   nodes. The hub disciplines its own clock and serves time to nobody.
 - **`set-static-ip` per-interface state.** The helper takes
   `<ip/cidr> <gateway>` only; there is no interface argument and no
-  `/etc/lab-tester/net.d`. Configuring a second NIC still overwrites the first.
-- **`/etc/sysctl.d/99-lab-tester.conf` pinning `net.ipv4.ip_forward=0`.**
+  `/etc/mesh-probe/net.d`. Configuring a second NIC still overwrites the first.
+- **`/etc/sysctl.d/99-mesh-probe.conf` pinning `net.ipv4.ip_forward=0`.**
   Absent — Alpine's default is 0, but the build does not assert it.
 - **Time-based syslog pruning.** Syslog is row-capped only. (`results` *does*
   have working time-based retention via `HUB_RESULT_RETENTION_HOURS`, swept on
@@ -633,7 +649,7 @@ but **nothing here works today**:
 
 ## Open items
 
-- **Renaming.** `lab-tester` (and possibly the separate `lab-butler` project)
+- **Renaming.** `mesh-probe` (and possibly the separate `lab-butler` project)
   may get renamed — current name is generic and a poor search/package term.
   Candidate: `lab-scout` (exact-name collision with an unrelated, low-traffic
   GitHub project, `mithr4ndir/lab-scout`; judged low risk). Also floated:
@@ -673,7 +689,7 @@ but **nothing here works today**:
   outside this project's scope now that device identity/configuration lives
   in the router project.
 - **Hostname is still the one per-clone input.** `setup.sh` takes it from
-  `guestinfo.lab.hostname` or derives it from the group slug. Deriving it from
+  `guestinfo.meshprobe.hostname` or derives it from the group slug. Deriving it from
   IP or MAC at first boot would remove the last manual step and the
   duplicate-hostname failure mode (constraint 1).
 
@@ -736,9 +752,9 @@ is set. Set it.
 5 skills in `.claude/skills/` and 8 agents in `.claude/agents/` (a real
 directory, not a junction), following the 2026-09-14 re-scope which removed 9 vendored
 generic network-device skills and 3 generic network agents that carried no
-project-specific content. Project-specific skills: `lab-tester-hub-api`,
-`lab-tester-node`, `lab-tester-troubleshooting`, `lab-tester-add-test-type`,
-`lab-tester-dev-toolkit`. Claude Code only loads skills from `.claude/skills/`;
+project-specific content. Project-specific skills: `mesh-probe-hub-api`,
+`mesh-probe-node`, `mesh-probe-troubleshooting`, `mesh-probe-add-test-type`,
+`mesh-probe-dev-toolkit`. Claude Code only loads skills from `.claude/skills/`;
 they sat unloaded in a root `skills/` folder until 2026-09-22.
 Project-specific agents:
 
@@ -749,7 +765,7 @@ Project-specific agents:
 | `hub-api-developer` | Changes under `hub/` — routes, schema, dashboard. |
 | `alpine-vm-builder` | Anything running on the nodes. |
 | `golden-image-verifier` | Real-Alpine-container verification of `build-template.sh` changes. |
-| `lab-tester-diagnostician` | Triage when the dashboard looks wrong. |
+| `mesh-probe-diagnostician` | Triage when the dashboard looks wrong. |
 | `test-result-analyst` | Interpreting collected results rather than fixing an outage. |
 | `vsphere-deploy-reviewer` | PowerCLI clone scripts — guestinfo keys, unique clone names, power-on ordering. |
 

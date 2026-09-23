@@ -1,5 +1,5 @@
 #!/bin/sh
-# Dev shim so one workstation can simulate several distinct lab-tester
+# Dev shim so one workstation can simulate several distinct mesh-probe
 # nodes: run-node-cycle.sh sets DEV_HOSTNAME per invocation. Falls back to
 # the real `hostname` binary (found outside this shim directory, so it
 # can't call itself) when unset.

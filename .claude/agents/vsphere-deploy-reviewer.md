@@ -1,11 +1,11 @@
 ---
 name: vsphere-deploy-reviewer
-description: Lab-tester vSphere provisioning agent. Invoke when writing or reviewing deploy/Deploy-LabTester.ps1 or any other PowerCLI script that clones VMs from the golden templates — checks guestinfo keys against CLAUDE.md's tables, clone-name uniqueness (constraint 1), and guestinfo-before-power-on ordering. Fills the gap golden-image-verifier explicitly disclaims — it never touches VMware guestinfo or real vCenter behavior.
+description: Mesh-probe vSphere provisioning agent. Invoke when writing or reviewing deploy/Deploy-MeshProbe.ps1 or any other PowerCLI script that clones VMs from the golden templates — checks guestinfo keys against CLAUDE.md's tables, clone-name uniqueness (constraint 1), and guestinfo-before-power-on ordering. Fills the gap golden-image-verifier explicitly disclaims — it never touches VMware guestinfo or real vCenter behavior.
 tools: Read, Edit, Write, Bash, PowerShell, Grep
 model: sonnet
 ---
 
-You review and write lab-tester's vSphere-side provisioning: PowerCLI
+You review and write mesh-probe's vSphere-side provisioning: PowerCLI
 scripts that clone the hub and node golden templates and hand them the
 guestinfo they read at first boot. `alpine-vm-builder` and
 `golden-image-verifier` own everything that happens *inside* a template;
@@ -39,11 +39,11 @@ powered on with the right keys set before it ever boots.
   `guestinfo.hub.gateway`. Both optional on the hub side — absent, its
   firstboot service stands down and `hub-setup.sh` prompts at first login
   instead.
-- Node keys: `guestinfo.lab.hub_url`, `guestinfo.lab.group`,
-  `guestinfo.lab.subnet` (optional — falls back to the DHCP lease),
-  `guestinfo.lab.hostname` (optional — derived as
-  `<HOSTNAME_PREFIX>-<group-slug>` when unset), `guestinfo.lab.dns_server`
-  / `guestinfo.lab.dns_query` (optional pair — DNS test only runs when
+- Node keys: `guestinfo.meshprobe.hub_url`, `guestinfo.meshprobe.group`,
+  `guestinfo.meshprobe.subnet` (optional — falls back to the DHCP lease),
+  `guestinfo.meshprobe.hostname` (optional — derived as
+  `<HOSTNAME_PREFIX>-<group-slug>` when unset), `guestinfo.meshprobe.dns_server`
+  / `guestinfo.meshprobe.dns_query` (optional pair — DNS test only runs when
   `dns_server` is set). Precedence in-guest is guestinfo → environment →
   prompt.
 - **Constraint 1 (CLAUDE.md): `endpoints.hostname` is a PRIMARY KEY.**
@@ -64,7 +64,7 @@ powered on with the right keys set before it ever boots.
 
 Read the target script in full, plus its own comment-based help — this
 project's existing deploy script documents its contract unusually
-completely (see `deploy/Deploy-LabTester.ps1`'s `.PARAMETER` blocks and
+completely (see `deploy/Deploy-MeshProbe.ps1`'s `.PARAMETER` blocks and
 `.NOTES`); treat a doc/behavior mismatch inside the script itself as a
 finding, same as a doc/behavior mismatch against `CLAUDE.md`.
 
@@ -77,10 +77,10 @@ For every `Set-Guestinfo` / `New-AdvancedSetting` call, confirm:
   simply doesn't find the key it's looking for and silently falls
   through to its no-guestinfo path)
 - it runs before the VM is powered on
-- optional keys stay conditional (don't set `guestinfo.lab.dns_server`
+- optional keys stay conditional (don't set `guestinfo.meshprobe.dns_server`
   unset/empty — that's different from never setting it, and the node
   side may treat an empty string differently than an absent key)
-- `guestinfo.lab.hostname` is not being set by deployment tooling unless
+- `guestinfo.meshprobe.hostname` is not being set by deployment tooling unless
   that's a deliberate, stated choice — the project's own script leaves
   it unset on purpose so the vCenter VM name and in-guest hostname stay
   derivable from the same inputs
@@ -102,7 +102,7 @@ without needing `VMware.VimAutomation.Core` or a vCenter connection:
 
 ```powershell
 $tokens = $null; $errors = $null
-[System.Management.Automation.Language.Parser]::ParseFile('deploy/Deploy-LabTester.ps1', [ref]$tokens, [ref]$errors)
+[System.Management.Automation.Language.Parser]::ParseFile('deploy/Deploy-MeshProbe.ps1', [ref]$tokens, [ref]$errors)
 $errors
 ```
 

@@ -1,10 +1,10 @@
 ---
-name: lab-tester-hub-api
-description: The lab-tester hub contract — Flask endpoints, SQLite schema, result JSON shape, and dashboard data flow. Read before changing hub/app/app.py, adding an API route, altering the results schema, or touching anything a node posts to.
-origin: lab-tester
+name: mesh-probe-hub-api
+description: The mesh-probe hub contract — Flask endpoints, SQLite schema, result JSON shape, and dashboard data flow. Read before changing hub/app/app.py, adding an API route, altering the results schema, or touching anything a node posts to.
+origin: mesh-probe
 ---
 
-# Lab-Tester Hub API
+# Mesh-Probe Hub API
 
 The hub (`hub/app/app.py`) is the single source of truth for endpoints and results. Nodes are dumb clients: they register, pull the mesh list, test, and push. Any change to the shapes below is a breaking change for every deployed golden image.
 
@@ -43,7 +43,7 @@ Upsert keyed on `hostname`; `last_seen` is set server-side to UTC ISO-8601. Miss
 
 `GET /api/results?minutes=N` (default 10) — dashboard matrix. `GET /api/results/<source>/<target>` — drill-down, newest first, LIMIT 200.
 
-`GET /api/path-changes?minutes=N` (default 10) — detected traceroute path changes, `[{source, target, received_at, detail}]`. Reads `syslog` rows tagged `host=lab-tester-hub`/`mnemonic=%LABTESTER-5-PATHCHANGE`, written by `hub/app/pathchange.py` via a hook inside `push_results` (see Path-change detection below), not a new table.
+`GET /api/path-changes?minutes=N` (default 10) — detected traceroute path changes, `[{source, target, received_at, detail}]`. Reads `syslog` rows tagged `host=mesh-probe-hub`/`mnemonic=%MESHPROBE-5-PATHCHANGE`, written by `hub/app/pathchange.py` via a hook inside `push_results` (see Path-change detection below), not a new table.
 
 ## Syslog
 
@@ -63,7 +63,7 @@ Storage rules that differ from `results`:
 
 ## Path-change detection
 
-`POST /results` diffs each incoming `traceroute` row against the previous sample stored for that (source, target) pair (`_previous_traceroute`/`_note_path_change` in `app.py`, parsing/diff logic in `hub/app/pathchange.py`). A detected change is `INSERT`ed into `syslog` — not a new table — tagged `host=lab-tester-hub`, `mnemonic=%LABTESTER-5-PATHCHANGE`, severity 5, `source_ip=127.0.0.1`, using the batch's own `received` timestamp so it lands centred in the dashboard's ±5 min pinned window. `GET /api/path-changes` reads it back via `pathchange.split_message`.
+`POST /results` diffs each incoming `traceroute` row against the previous sample stored for that (source, target) pair (`_previous_traceroute`/`_note_path_change` in `app.py`, parsing/diff logic in `hub/app/pathchange.py`). A detected change is `INSERT`ed into `syslog` — not a new table — tagged `host=mesh-probe-hub`, `mnemonic=%MESHPROBE-5-PATHCHANGE`, severity 5, `source_ip=127.0.0.1`, using the batch's own `received` timestamp so it lands centred in the dashboard's ±5 min pinned window. `GET /api/path-changes` reads it back via `pathchange.split_message`.
 
 The diff rule: a hop position only counts when **both** samples got a real reply (`-q 1` means a single dropped probe is noise, not a change) — `parse_hops` simply omits no-reply hops, so comparing only hop numbers common to both samples makes this automatic. Path length alone is never a trigger for the same reason.
 
@@ -141,5 +141,5 @@ Every hub setting is an env var with a default. **Read `hub/app/config.py` for t
 
 ## Related Skills
 
-- lab-tester-node
-- lab-tester-troubleshooting
+- mesh-probe-node
+- mesh-probe-troubleshooting

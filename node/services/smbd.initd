@@ -1,14 +1,14 @@
 #!/sbin/openrc-run
-# OpenRC init script for the lab-tester SMB probe server (Samba smbd).
+# OpenRC init script for the mesh-probe SMB probe server (Samba smbd).
 #
-# Named lab-smbd, not smbd/samba, for the same reason lab-httpd isn't named
+# Named mesh-probe-smbd, not smbd/samba, for the same reason mesh-probe-httpd isn't named
 # httpd: this is our service definition, not Alpine's samba-server *-openrc
 # subpackage (which is deliberately not installed — see build-template.sh's
 # package notes). Only enabled by setup.sh when ENABLE_SMB=true; not added
 # to any runlevel at image build time.
 
-name="lab-smbd"
-description="lab-tester SMB probe server (Samba smbd)"
+name="mesh-probe-smbd"
+description="mesh-probe SMB probe server (Samba smbd)"
 
 command="/usr/sbin/smbd"
 command_args="-F"

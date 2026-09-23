@@ -1,6 +1,6 @@
-# Lab-Tester: Alpine Linux Golden Image Build Guide
+# Mesh-Probe: Alpine Linux Golden Image Build Guide
 
-This guide walks through building Alpine Linux VMs for the lab-tester connectivity testing system. You will create a base VM, configure it for one of two roles (node or hub), then convert it to a vCenter template for rapid deployment.
+This guide walks through building Alpine Linux VMs for the mesh-probe connectivity testing system. You will create a base VM, configure it for one of two roles (node or hub), then convert it to a vCenter template for rapid deployment.
 
 ## Table of Contents
 
@@ -37,9 +37,9 @@ Before starting, make sure you have:
   - A management/routable subnet where the hub VM will live (IP address, gateway, DNS)
   - Knowledge of which port groups map to each node's subnet
   - The hub VM's IP address or hostname (nodes push results here)
-- **The lab-tester project files**, reachable one of two ways:
+- **The mesh-probe project files**, reachable one of two ways:
   - **Download (recommended):** GitHub reachable from the VM over HTTPS.
-    `wget -O- https://github.com/orneh24/lab-tester/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/lab-tester-main /root/lab-tester`
+    `wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe`
     uses only BusyBox `wget`/`tar` and `ssl_client`, all on the base image,
     so it works right after `setup-alpine` with no `apk add` at all. Once
     unpacked, `sh install.sh` at the repo root is the entry point — it asks
@@ -90,7 +90,7 @@ Walk through the prompts as follows:
 |-------------------------------|-------------------------------------------|
 | Keyboard layout               | `us` (or your layout)                     |
 | Keyboard variant              | `us` (or your variant)                    |
-| Hostname                      | `lab-tester` (will change per clone)      |
+| Hostname                      | `mesh-probe` (will change per clone)      |
 | Network interface             | `eth0`                                    |
 | IP address for eth0           | `dhcp`                                    |
 | Manual network config         | `n`                                       |
@@ -181,7 +181,7 @@ subpackage's service is named bare `smtpd` — the same generic-name collision
 risk `httpd` was — and installing it would let an operator `rc-update add
 smtpd` by accident, bypassing `ENABLE_SMTP` and every safety guard in this
 project's own `smtpd.conf`. `node/services/smtpd.initd` ships our own
-`lab-smtpd` service instead. `opensmtpd` also claims `/usr/sbin/sendmail`,
+`mesh-probe-smtpd` service instead. `opensmtpd` also claims `/usr/sbin/sendmail`,
 which is harmless alone but a hard collision if `postfix`/`ssmtp`/`msmtp` are
 ever added.
 
@@ -215,16 +215,16 @@ Before converting to a template, clean up the VM so each clone starts fresh.
 > either script's own final `log` output, which tells you so. Nothing to run
 > by hand here for either role. The one thing neither script cleans up is a
 > repo download used to get the project files onto the VM in the first place
-> (§1 / DEPLOYMENT stage 1) — `rm -rf /root/lab-tester` if you used one,
+> (§1 / DEPLOYMENT stage 1) — `rm -rf /root/mesh-probe` if you used one,
 > right before 5.3. 5.1/5.2 are kept below only as reference for what the
 > scripts do; 5.3-5.5 are the real remaining manual steps, for both roles.
 >
 > **But if you then verified the image** — logged in and let `node-setup.sh`
-> prompt you (or set `/etc/lab-tester/config` and ran `setup.sh` directly) to
+> prompt you (or set `/etc/mesh-probe/config` and ran `setup.sh` directly) to
 > confirm the node registers against the live hub, as DEPLOYMENT stage 3 has
 > you do — that verification just undid the config, hostname and login-stamp
 > parts of 5.1's cleanup: `setup.sh` writes a real config and sets a real
-> hostname, and `node-setup.sh` writes `/etc/lab-tester/.setup-done`.
+> hostname, and `node-setup.sh` writes `/etc/mesh-probe/.setup-done`.
 > **Redo all three before 5.3**, or the template ships with a live
 > `GROUP_NAME`/`SUBNET` and a real hostname baked in (every clone from it
 > starts with that same hostname — the collision constraint 1 exists to
@@ -232,13 +232,13 @@ Before converting to a template, clean up the VM so each clone starts fresh.
 > even offers the prompt on any clone made from it.
 >
 > ```sh
-> rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
->       /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
-> printf 'lab-tester-template\n' > /etc/hostname
+> rm -f /etc/mesh-probe/config /etc/mesh-probe/config.bak-* \
+>       /etc/mesh-probe/.firstboot-done /etc/mesh-probe/.setup-done
+> printf 'mesh-probe-template\n' > /etc/hostname
 > ```
 >
 > Same applies to the hub if you tested registration/dashboard access before
-> converting it: `rm -f /var/lib/lab-tester/hub.db /etc/lab-tester-hub/.setup-done`
+> converting it: `rm -f /var/lib/mesh-probe/hub.db /etc/mesh-probe-hub/.setup-done`
 > (see 5.5's note — templating the hub is optional in the first place).
 
 ### 5.1 Clean Up (Node Image, reference only — see banner above)
@@ -253,11 +253,11 @@ rm -f /etc/dropbear/dropbear_*
 echo "" > /etc/machine-id
 
 # Reset hostname (clones should set their own)
-printf 'lab-tester-template\n' > /etc/hostname
+printf 'mesh-probe-template\n' > /etc/hostname
 
 # Remove config, firstboot and login-prompt stamps to force per-clone setup
-rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
-      /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
+rm -f /etc/mesh-probe/config /etc/mesh-probe/config.bak-* \
+      /etc/mesh-probe/.firstboot-done /etc/mesh-probe/.setup-done
 
 # Clean logs
 rm -f /var/log/*.log
@@ -296,7 +296,7 @@ Dropbear automatically regenerates missing host keys on service start, so no add
 ### 5.5 Convert to Template in vCenter
 
 Standard vCenter template conversion, not covered here. Name it
-descriptively, e.g. `lab-tester-node-template-v1`.
+descriptively, e.g. `mesh-probe-node-template-v1`.
 
 > Do this once for the node clone. Since there is typically only one hub,
 > you may prefer to keep the hub clone as a regular VM instead of
@@ -365,17 +365,17 @@ flexible anyway since they can carry the whole configuration.
 
 5. OK → OK, then power on.
 
-`guestinfo.lab.hostname` is optional — omit it and the name is derived from
+`guestinfo.meshprobe.hostname` is optional — omit it and the name is derived from
 the group as `test-node-<group>` (so `site-a` becomes `test-node-site-a`).
 
 **With PowerCLI**, which is worth it from the second node onward:
 
 ```powershell
 $vm = Get-VM "lab-test-site-a"
-$vm | New-AdvancedSetting -Name guestinfo.lab.hub_url  -Value "http://10.0.0.100" -Confirm:$false
-$vm | New-AdvancedSetting -Name guestinfo.lab.group    -Value "site-a"            -Confirm:$false
-$vm | New-AdvancedSetting -Name guestinfo.lab.subnet   -Value "10.1.1.0/24"       -Confirm:$false
-$vm | New-AdvancedSetting -Name guestinfo.lab.hostname -Value "test-node-site-a"  -Confirm:$false
+$vm | New-AdvancedSetting -Name guestinfo.meshprobe.hub_url  -Value "http://10.0.0.100" -Confirm:$false
+$vm | New-AdvancedSetting -Name guestinfo.meshprobe.group    -Value "site-a"            -Confirm:$false
+$vm | New-AdvancedSetting -Name guestinfo.meshprobe.subnet   -Value "10.1.1.0/24"       -Confirm:$false
+$vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value "test-node-site-a"  -Confirm:$false
 ```
 
 Deploying the whole lab in one pass:
@@ -389,16 +389,16 @@ $lab = @(
 )
 
 foreach ($n in $lab) {
-    $vm = New-VM -Name $n.Name -Template "lab-tester-node" `
+    $vm = New-VM -Name $n.Name -Template "mesh-probe-node" `
                  -VMHost (Get-VMHost | Select-Object -First 1) -Confirm:$false
 
     Get-NetworkAdapter -VM $vm |
         Set-NetworkAdapter -NetworkName $n.PortGroup -Confirm:$false
 
-    $vm | New-AdvancedSetting -Name guestinfo.lab.hub_url  -Value $hub       -Confirm:$false
-    $vm | New-AdvancedSetting -Name guestinfo.lab.group    -Value $n.Group   -Confirm:$false
-    $vm | New-AdvancedSetting -Name guestinfo.lab.subnet   -Value $n.Subnet  -Confirm:$false
-    $vm | New-AdvancedSetting -Name guestinfo.lab.hostname -Value ("test-node-" + $n.Group.ToLower()) -Confirm:$false
+    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hub_url  -Value $hub       -Confirm:$false
+    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.group    -Value $n.Group   -Confirm:$false
+    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.subnet   -Value $n.Subnet  -Confirm:$false
+    $vm | New-AdvancedSetting -Name guestinfo.meshprobe.hostname -Value ("test-node-" + $n.Group.ToLower()) -Confirm:$false
 
     Start-VM -VM $vm -Confirm:$false
 }
@@ -408,7 +408,7 @@ To change a key later, use `Get-AdvancedSetting | Set-AdvancedSetting` rather
 than `New-AdvancedSetting`, which fails on an existing name:
 
 ```powershell
-Get-VM "lab-test-site-a" | Get-AdvancedSetting -Name guestinfo.lab.subnet |
+Get-VM "lab-test-site-a" | Get-AdvancedSetting -Name guestinfo.meshprobe.subnet |
     Set-AdvancedSetting -Value "10.1.99.0/24" -Confirm:$false
 ```
 
@@ -416,16 +416,16 @@ Get-VM "lab-test-site-a" | Get-AdvancedSetting -Name guestinfo.lab.subnet |
 
 ```sh
 govc vm.change -vm lab-test-site-a \
-  -e guestinfo.lab.hub_url=http://10.0.0.100 \
-  -e guestinfo.lab.group=site-a \
-  -e guestinfo.lab.subnet=10.1.1.0/24 \
-  -e guestinfo.lab.hostname=test-node-site-a
+  -e guestinfo.meshprobe.hub_url=http://10.0.0.100 \
+  -e guestinfo.meshprobe.group=site-a \
+  -e guestinfo.meshprobe.subnet=10.1.1.0/24 \
+  -e guestinfo.meshprobe.hostname=test-node-site-a
 ```
 
 Confirm from inside the guest that the keys arrived:
 
 ```sh
-vmware-rpctool "info-get guestinfo.lab.group"
+vmware-rpctool "info-get guestinfo.meshprobe.group"
 ```
 
 An unset key reports `No value found` — that is the expected response, not an
@@ -441,7 +441,7 @@ past that.
 ### 6.5 Run setup and register
 
 ```sh
-/usr/local/bin/lab-tester/setup.sh
+/usr/local/bin/mesh-probe/setup.sh
 ```
 
 Or via the wizard — same effect, plus the permission gate and stamp
@@ -451,10 +451,10 @@ bookkeeping described in §6.5b:
 node-setup.sh
 ```
 
-Either writes `/etc/lab-tester/config`, sets the hostname, enables the
+Either writes `/etc/mesh-probe/config`, sets the hostname, enables the
 services, installs the cron entries, builds the identity page, and performs
 an initial registration against the hub. It is safe to re-run — an existing
-config file is kept, and a live `guestinfo.lab.hostname` still takes effect.
+config file is kept, and a live `guestinfo.meshprobe.hostname` still takes effect.
 
 Precedence for each value is: **guestinfo → environment variable → prompt**,
 except `SUBNET`, which has one extra fallback before the prompt: derived
@@ -462,24 +462,24 @@ from the interface's own DHCP lease.
 
 ### 6.5a Zero-touch: let first boot do it
 
-The template ships an OpenRC service, `lab-tester-firstboot`, that runs
-`setup.sh` automatically when `guestinfo.lab.hub_url` and `guestinfo.lab.group`
+The template ships an OpenRC service, `mesh-probe-firstboot`, that runs
+`setup.sh` automatically when `guestinfo.meshprobe.hub_url` and `guestinfo.meshprobe.group`
 are both present. With the keys set at clone time you never open a console —
 power on and the node configures, names itself, and registers.
 
 If the keys are absent the service stands down and leaves the MOTD
 instructions, because `setup.sh` would otherwise block on prompts with nobody
 attached — the login prompt in §6.5b covers that case instead. On success it
-stamps two files: `/etc/lab-tester/.firstboot-done` (this service's own
-re-entry guard, its only reader) and `/etc/lab-tester/.setup-done` with
+stamps two files: `/etc/mesh-probe/.firstboot-done` (this service's own
+re-entry guard, its only reader) and `/etc/mesh-probe/.setup-done` with
 content `configured (guestinfo)` (the login prompt's shared stamp — see
-§6.5b), and logs to `/var/log/lab-tester/firstboot.log`.
+§6.5b), and logs to `/var/log/mesh-probe/firstboot.log`.
 
 To re-run it deliberately:
 
 ```sh
-rm /etc/lab-tester/.firstboot-done /etc/lab-tester/config
-rc-service lab-tester-firstboot start
+rm /etc/mesh-probe/.firstboot-done /etc/mesh-probe/config
+rc-service mesh-probe-firstboot start
 ```
 
 The two stamps are independent — this only re-arms firstboot itself. If
@@ -501,8 +501,8 @@ mirroring the Hub's exactly:
 ```sh
 case "$-" in
     *i*)
-        if [ -t 0 ] && [ ! -f /etc/lab-tester/.setup-done ]; then
-            /usr/local/bin/lab-tester/node-setup.sh || true
+        if [ -t 0 ] && [ ! -f /etc/mesh-probe/.setup-done ]; then
+            /usr/local/bin/mesh-probe/node-setup.sh || true
         fi
         ;;
 esac
@@ -520,7 +520,7 @@ fallback). Decline it and you're offered `Skip and don't ask again at
 login? [y/N]`; answer yes and it won't ask again until you run
 `node-setup.sh --force` yourself.
 
-**Stamp file**: `/etc/lab-tester/.setup-done`, distinct from
+**Stamp file**: `/etc/mesh-probe/.setup-done`, distinct from
 `.firstboot-done` (see §6.5a) on purpose — reusing that file would mean
 declining the login prompt silently disarms the zero-touch guestinfo path
 too. `cat` it to see why the prompt has gone quiet:
@@ -550,10 +550,10 @@ Checking from the clone itself:
 
 ```sh
 hostname                                    # unique, e.g. test-node-site-a
-cat /etc/lab-tester/config                  # values landed correctly
-rc-service lab-httpd status                 # identity page is being served
-/usr/local/bin/lab-tester/test-cycle.sh     # run one cycle in the foreground
-tail -f /var/log/lab-tester/test-cycle.log
+cat /etc/mesh-probe/config                  # values landed correctly
+rc-service mesh-probe-httpd status                 # identity page is being served
+/usr/local/bin/mesh-probe/test-cycle.sh     # run one cycle in the foreground
+tail -f /var/log/mesh-probe/test-cycle.log
 ```
 
 ---
@@ -570,9 +570,9 @@ tail -f /var/log/lab-tester/test-cycle.log
 | M | path-MTU probe, DF bit set | always |
 | D | DNS resolution | only when `DNS_SERVER` is set |
 | I | iperf3 throughput | only when `ENABLE_IPERF=true` |
-| B | SMB fetch of the probe file (`smbclient` against `lab-smbd`) | only when `ENABLE_SMB=true` |
+| B | SMB fetch of the probe file (`smbclient` against `mesh-probe-smbd`) | only when `ENABLE_SMB=true` |
 | L | Packet loss % / RTT jitter (`fping`) | always |
-| E | SMTP envelope conversation (`EHLO`/`MAIL`/`RCPT`/`RSET`, never `DATA`) against `lab-smtpd` | mesh: only when `ENABLE_SMTP=true`; static targets: always |
+| E | SMTP envelope conversation (`EHLO`/`MAIL`/`RCPT`/`RSET`, never `DATA`) against `mesh-probe-smtpd` | mesh: only when `ENABLE_SMTP=true`; static targets: always |
 
 **Why E matters.** Every other gated test either works or doesn't; SMTP is
 the one that catches a device *passing* traffic while *rewriting* it. An
@@ -581,7 +581,7 @@ masks unrecognised capability verbs (e.g. `STARTTLS`) with runs of `X`, so
 `250-XXXXXXXX` in the recorded `output` means an inspection engine is
 editing the session in flight — nothing else in this matrix would ever
 notice. `success` gates on the banner + `EHLO` response only, not on `RCPT`:
-a real, correctly-configured relay rejects `RCPT TO:<probe@lab.invalid>`
+a real, correctly-configured relay rejects `RCPT TO:<probe@mesh-probe.invalid>`
 with `550`, which must not paint it red. The conversation never issues
 `DATA` and the server has no `relay` action — see CLAUDE.md constraint 21.
 
@@ -626,12 +626,12 @@ accepts. Nodes pick up changes on their next cycle, within 60 seconds.
 
 ### 6A.3 Updating the agent scripts
 
-The hub serves the agent scripts from `/opt/lab-tester-hub/agent/`, and every
+The hub serves the agent scripts from `/opt/mesh-probe-hub/agent/`, and every
 node converges there on its 5-minute registration run. Editing the file *is*
 the deploy — checksums are computed on request, so there is no rebuild step:
 
 ```sh
-vi /opt/lab-tester-hub/agent/test-cycle.sh
+vi /opt/mesh-probe-hub/agent/test-cycle.sh
 ```
 
 Three gates run before a node trusts an update: the download must match the
@@ -643,10 +643,10 @@ nodes simply stay on the last working version and log why.
 Watch it land:
 
 ```sh
-tail -f /var/log/lab-tester/register.log
+tail -f /var/log/mesh-probe/register.log
 ```
 
-Pin a node with `AGENT_AUTOUPDATE=false` in `/etc/lab-tester/config`.
+Pin a node with `AGENT_AUTOUPDATE=false` in `/etc/mesh-probe/config`.
 
 > **Note:** the hub API is unauthenticated. Anyone who can reach it can post
 > results, add targets, or change the agent scripts every node then executes.
@@ -681,7 +681,7 @@ curl -v http://<hub-ip>/ 2>&1 | head -20
 **Common causes:**
 - Node is on the wrong port group (wrong VLAN)
 - No route from the node's subnet to the hub's subnet (check the network path)
-- Hub's Flask app is not running (`rc-service lab-tester-hub status` on the hub)
+- Hub's Flask app is not running (`rc-service mesh-probe-hub status` on the hub)
 - Hub is bound to `127.0.0.1` instead of `0.0.0.0` (check `run.sh` or `config.py`)
 
 ### DHCP Not Working
@@ -714,7 +714,7 @@ silently unreachable until someone fixes DHCP or runs `setup.sh` by hand.
 
 ```sh
 # Run a test cycle manually and watch the output
-/usr/local/bin/lab-tester/test-cycle.sh
+/usr/local/bin/mesh-probe/test-cycle.sh
 
 # Test individual services on a remote node
 curl -s http://<remote-node-ip>/
@@ -727,7 +727,7 @@ traceroute <remote-node-ip>
 ```
 
 **Common causes:**
-- Target node's service is not running (iperf3, httpd, dropbear, lab-smbd, lab-smtpd)
+- Target node's service is not running (iperf3, httpd, dropbear, mesh-probe-smbd, mesh-probe-smtpd)
 - ACLs or firewall rules on the network path blocking specific ports
 - SSH host key issues (dropbear regenerated keys but known_hosts has old key)
   ```sh
@@ -743,16 +743,16 @@ On the hub VM:
 
 ```sh
 # Check if the service is running
-rc-service lab-tester-hub status
+rc-service mesh-probe-hub status
 
 # Check logs
-cat /var/log/lab-tester-hub.log
+cat /var/log/mesh-probe-hub.log
 
 # Check if Flask is listening
 netstat -tlnp | grep ':80 '
 
 # Try starting manually to see errors
-cd /opt/lab-tester-hub && /bin/sh run.sh
+cd /opt/mesh-probe-hub && /bin/sh run.sh
 ```
 
 **Common causes:**
@@ -804,9 +804,9 @@ grep -i error /var/log/messages | tail -20
 > **Superseded by `node/build-template.sh`**, exactly as Appendix B is by the
 > hub's script — or by `install.sh` at the repo root, which asks the role and
 > runs the right one. Copy `node/` to the VM and run it: it installs the
-> package set above, populates `/usr/local/bin/lab-tester/`, installs the
+> package set above, populates `/usr/local/bin/mesh-probe/`, installs the
 > services and the logrotate config, generates the shared SSH keypair, and
-> enables `dropbear`, `crond`, `lab-httpd`, `chronyd`, `open-vm-tools`, the
+> enables `dropbear`, `crond`, `mesh-probe-httpd`, `chronyd`, `open-vm-tools`, the
 > first-boot service, and the `node-setup.sh` login prompt (§6.5b).
 > `DEPLOYMENT.md` stage 3 is the current procedure.
 >
@@ -821,8 +821,8 @@ Starting from the base VM (or a clone of it), configure it as a node.
 ### A.1 Create Directory Structure
 
 ```sh
-mkdir -p /etc/lab-tester
-mkdir -p /usr/local/bin/lab-tester
+mkdir -p /etc/mesh-probe
+mkdir -p /usr/local/bin/mesh-probe
 mkdir -p /var/www/localhost/htdocs
 ```
 
@@ -848,20 +848,20 @@ From the machine hosting the project files, SCP them onto the VM. Adjust paths t
 
 ```sh
 # From your workstation:
-scp -O node/scripts/register.sh    root@<VM_IP>:/usr/local/bin/lab-tester/
-scp -O node/scripts/test-cycle.sh  root@<VM_IP>:/usr/local/bin/lab-tester/
-scp -O node/scripts/test-status.sh root@<VM_IP>:/usr/local/bin/lab-tester/
-scp -O node/scripts/setup.sh       root@<VM_IP>:/usr/local/bin/lab-tester/
-scp -O node/config.sample           root@<VM_IP>:/etc/lab-tester/config.sample
+scp -O node/scripts/register.sh    root@<VM_IP>:/usr/local/bin/mesh-probe/
+scp -O node/scripts/test-cycle.sh  root@<VM_IP>:/usr/local/bin/mesh-probe/
+scp -O node/scripts/test-status.sh root@<VM_IP>:/usr/local/bin/mesh-probe/
+scp -O node/scripts/setup.sh       root@<VM_IP>:/usr/local/bin/mesh-probe/
+scp -O node/config.sample           root@<VM_IP>:/etc/mesh-probe/config.sample
 scp -O node/services/iperf3.initd  root@<VM_IP>:/etc/init.d/iperf3
-scp -O node/services/smbd.initd    root@<VM_IP>:/etc/init.d/lab-smbd
+scp -O node/services/smbd.initd    root@<VM_IP>:/etc/init.d/mesh-probe-smbd
 scp -O node/services/smb.conf      root@<VM_IP>:/etc/samba/smb.conf
-scp -O node/services/smtpd.initd   root@<VM_IP>:/etc/init.d/lab-smtpd
+scp -O node/services/smtpd.initd   root@<VM_IP>:/etc/init.d/mesh-probe-smtpd
 scp -O node/services/smtpd.conf    root@<VM_IP>:/etc/smtpd/smtpd.conf
-scp -O node/services/lab-tester-httpd.conf root@<VM_IP>:/etc/httpd.conf
-scp -O node/services/login-status.sh root@<VM_IP>:/etc/profile.d/lab-tester-status.sh
-scp -O node/services/crontab       root@<VM_IP>:/etc/lab-tester/crontab
-ssh root@<VM_IP> 'chmod +x /usr/local/bin/lab-tester/*.sh && ln -sf /usr/local/bin/lab-tester/test-status.sh /usr/local/bin/test-status'
+scp -O node/services/mesh-probe-httpd.conf root@<VM_IP>:/etc/httpd.conf
+scp -O node/services/login-status.sh root@<VM_IP>:/etc/profile.d/mesh-probe-status.sh
+scp -O node/services/crontab       root@<VM_IP>:/etc/mesh-probe/crontab
+ssh root@<VM_IP> 'chmod +x /usr/local/bin/mesh-probe/*.sh && ln -sf /usr/local/bin/mesh-probe/test-status.sh /usr/local/bin/test-status'
 ```
 
 `test-status.sh` is not part of the agent self-update manifest (only
@@ -873,14 +873,14 @@ the way to get it there without a template rebuild.
 > crontab wholesale and destroys Alpine's `run-parts` entries, which are what
 > drive `/etc/periodic/*` — including the daily logrotate run. The disk then
 > fills with rotation installed but never triggered. `setup.sh` merges the
-> lab-tester block into the existing crontab instead; let it. (CLAUDE.md
+> mesh-probe block into the existing crontab instead; let it. (CLAUDE.md
 > constraint 12.)
 
 ### A.3 Create the Configuration File
 
 ```sh
-cp /etc/lab-tester/config.sample /etc/lab-tester/config
-vi /etc/lab-tester/config
+cp /etc/mesh-probe/config.sample /etc/mesh-probe/config
+vi /etc/mesh-probe/config
 ```
 
 Set the required values:
@@ -896,11 +896,11 @@ SUBNET="10.1.1.0/24"
 ### A.4 Set Permissions and Run Setup
 
 ```sh
-chmod +x /usr/local/bin/lab-tester/*.sh
+chmod +x /usr/local/bin/mesh-probe/*.sh
 chmod +x /etc/init.d/iperf3
-chmod +x /etc/init.d/lab-smbd
-chmod +x /etc/init.d/lab-smtpd
-/usr/local/bin/lab-tester/setup.sh
+chmod +x /etc/init.d/mesh-probe-smbd
+chmod +x /etc/init.d/mesh-probe-smtpd
+/usr/local/bin/mesh-probe/setup.sh
 ```
 
 ### A.5 Enable Services in OpenRC
@@ -910,7 +910,7 @@ rc-update add iperf3 default
 rc-update add crond default
 ```
 
-> `lab-smbd` and `lab-smtpd` are not enabled here. Like `iperf3` under
+> `mesh-probe-smbd` and `mesh-probe-smtpd` are not enabled here. Like `iperf3` under
 > `ENABLE_IPERF`, `setup.sh` only `rc-update add`s each when its
 > `ENABLE_SMB`/`ENABLE_SMTP` flag is `true` in the config — `build-template.sh`
 > installs the packages and service files but leaves both off by default
@@ -933,9 +933,9 @@ BusyBox httpd serves a simple page that identifies this node to its peers:
 cat > /var/www/localhost/htdocs/index.html << 'EOF'
 <!DOCTYPE html>
 <html>
-<head><title>Lab Tester</title></head>
+<head><title>Mesh Probe</title></head>
 <body>
-<h1>Lab Tester Node</h1>
+<h1>Mesh Probe Node</h1>
 <p>Group: PLACEHOLDER</p>
 <p>Subnet: PLACEHOLDER</p>
 </body>
@@ -943,16 +943,16 @@ cat > /var/www/localhost/htdocs/index.html << 'EOF'
 EOF
 ```
 
-The `setup.sh` script or a first-boot script should populate the actual values from `/etc/lab-tester/config`.
+The `setup.sh` script or a first-boot script should populate the actual values from `/etc/mesh-probe/config`.
 
 Start httpd:
 
 ```sh
-rc-service lab-httpd start
-rc-update add lab-httpd default
+rc-service mesh-probe-httpd start
+rc-update add mesh-probe-httpd default
 ```
 
-The service is `lab-httpd`, not `httpd` — `rc-update add httpd` enables a
+The service is `mesh-probe-httpd`, not `httpd` — `rc-update add httpd` enables a
 service that does not exist, and the web server then fails to come back after a
 reboot, silently breaking every HTTP test in the mesh.
 
@@ -988,8 +988,8 @@ crontab -l
 ## Appendix B: Manual Hub Configuration (reference only)
 
 > **Superseded by `hub/build-template.sh`.** Copy `hub/` to the VM and run that
-> script: it installs the packages, populates `/opt/lab-tester-hub/`, writes
-> `hub.env` and `/etc/init.d/lab-tester-hub`, installs `set-static-ip`, sets the
+> script: it installs the packages, populates `/opt/mesh-probe-hub/`, writes
+> `hub.env` and `/etc/init.d/mesh-probe-hub`, installs `set-static-ip`, sets the
 > lab credentials, and enables the hub, `chronyd`, `open-vm-tools` and dropbear.
 > `DEPLOYMENT.md` stage 2 is the current procedure.
 >
@@ -1003,8 +1003,8 @@ Starting from the base VM (or a fresh clone), configure it as the hub.
 ### B.1 Create Directory Structure
 
 ```sh
-mkdir -p /opt/lab-tester-hub/app
-mkdir -p /opt/lab-tester-hub/templates
+mkdir -p /opt/mesh-probe-hub/app
+mkdir -p /opt/mesh-probe-hub/templates
 ```
 
 ### B.2 Copy Hub Files
@@ -1017,16 +1017,16 @@ mkdir -p /opt/lab-tester-hub/templates
 
 ```sh
 # From your workstation:
-scp -O hub/app/__init__.py      root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp -O hub/app/app.py           root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp -O hub/app/config.py        root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp -O hub/app/syslog_server.py root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp -O hub/app/pathchange.py    root@<HUB_IP>:/opt/lab-tester-hub/app/
-scp -O hub/templates/dashboard.html root@<HUB_IP>:/opt/lab-tester-hub/templates/
-scp -O hub/templates/syslog.html    root@<HUB_IP>:/opt/lab-tester-hub/templates/
-scp -O hub/requirements.txt     root@<HUB_IP>:/opt/lab-tester-hub/
-scp -O hub/serve.py             root@<HUB_IP>:/opt/lab-tester-hub/
-scp -O hub/run.sh               root@<HUB_IP>:/opt/lab-tester-hub/
+scp -O hub/app/__init__.py      root@<HUB_IP>:/opt/mesh-probe-hub/app/
+scp -O hub/app/app.py           root@<HUB_IP>:/opt/mesh-probe-hub/app/
+scp -O hub/app/config.py        root@<HUB_IP>:/opt/mesh-probe-hub/app/
+scp -O hub/app/syslog_server.py root@<HUB_IP>:/opt/mesh-probe-hub/app/
+scp -O hub/app/pathchange.py    root@<HUB_IP>:/opt/mesh-probe-hub/app/
+scp -O hub/templates/dashboard.html root@<HUB_IP>:/opt/mesh-probe-hub/templates/
+scp -O hub/templates/syslog.html    root@<HUB_IP>:/opt/mesh-probe-hub/templates/
+scp -O hub/requirements.txt     root@<HUB_IP>:/opt/mesh-probe-hub/
+scp -O hub/serve.py             root@<HUB_IP>:/opt/mesh-probe-hub/
+scp -O hub/run.sh               root@<HUB_IP>:/opt/mesh-probe-hub/
 ```
 
 `serve.py` is the entrypoint the OpenRC service runs (B.5) — without it the
@@ -1049,7 +1049,7 @@ forget one:
 ### B.3 Install Python Dependencies
 
 ```sh
-cd /opt/lab-tester-hub
+cd /opt/mesh-probe-hub
 pip3 install -r requirements.txt --break-system-packages
 ```
 
@@ -1096,21 +1096,21 @@ Create the init script:
 > **This snippet is wrong and kept only to be recognisable.** It runs
 > `run.sh`, the foreground debug launcher. What `build-template.sh` actually
 > installs is `command="/usr/bin/python3"` with
-> `command_args="/opt/lab-tester-hub/serve.py"`, plus a `start_pre` that sources
+> `command_args="/opt/mesh-probe-hub/serve.py"`, plus a `start_pre` that sources
 > `hub.env`. Going through `run.sh` skips `serve.py`'s runtime `HUB_PORT`
 > handling, so a port set in `hub.env` is ignored.
 
 ```sh
-cat > /etc/init.d/lab-tester-hub << 'EOF'
+cat > /etc/init.d/mesh-probe-hub << 'EOF'
 #!/sbin/openrc-run
 
-name="lab-tester-hub"
-description="Lab Tester Hub Dashboard"
-command="/opt/lab-tester-hub/run.sh"
+name="mesh-probe-hub"
+description="Mesh Probe Hub Dashboard"
+command="/opt/mesh-probe-hub/run.sh"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
-output_log="/var/log/lab-tester-hub.log"
-error_log="/var/log/lab-tester-hub.log"
+output_log="/var/log/mesh-probe-hub.log"
+error_log="/var/log/mesh-probe-hub.log"
 
 depend() {
     need net
@@ -1118,15 +1118,15 @@ depend() {
 }
 EOF
 
-chmod +x /etc/init.d/lab-tester-hub
-chmod +x /opt/lab-tester-hub/run.sh
+chmod +x /etc/init.d/mesh-probe-hub
+chmod +x /opt/mesh-probe-hub/run.sh
 ```
 
 Enable and start:
 
 ```sh
-rc-update add lab-tester-hub default
-rc-service lab-tester-hub start
+rc-update add mesh-probe-hub default
+rc-service mesh-probe-hub start
 ```
 
 ### B.6 Test the Dashboard
@@ -1150,8 +1150,8 @@ is entirely optional — nothing in the mesh requires any device to log here.
 Nothing needs enabling — `serve.py` starts the listener. Confirm it bound:
 
 ```sh
-rc-service lab-tester-hub restart
-grep syslog /var/log/lab-tester-hub.log     # or the service's stdout
+rc-service mesh-probe-hub restart
+grep syslog /var/log/mesh-probe-hub.log     # or the service's stdout
 ```
 
 Expect `[syslog] listening on 0.0.0.0:514 (cap 300000 rows)`. If instead you
@@ -1202,7 +1202,7 @@ test card, pinned to that sample, plus per-group links in the pair header.
 Those filter on the device's *syslog* hostname — the name it puts in its own
 messages — so if a group link is empty while the plain window link shows the
 message, that device logs under a different name than the node's
-`guestinfo.lab.group` value. Match the names on the device side (many let you
+`guestinfo.meshprobe.group` value. Match the names on the device side (many let you
 set a logging origin-id or hostname) if you want those links to line up.
 
 Two things worth knowing before you rely on it:

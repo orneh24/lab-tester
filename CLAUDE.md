@@ -1,4 +1,4 @@
-# Lab Tester — Network End-to-End Connectivity Testing
+# Mesh Probe — Network End-to-End Connectivity Testing
 
 ## Project Overview
 A lightweight system for testing end-to-end connectivity between hosts —
@@ -26,10 +26,10 @@ Diagram: `docs/TOPOLOGY.md`.
   - Flask API (registry + result collector) served by **waitress**, not the
     Flask dev server (which is single-threaded and would queue the mesh's
     simultaneous pushes)
-  - SQLite database (WAL mode) at `/var/lib/lab-tester/hub.db`
+  - SQLite database (WAL mode) at `/var/lib/mesh-probe/hub.db`
   - Web dashboard on **port 80**
   - UDP syslog receiver on **port 514**, in a daemon thread (see Syslog below)
-- Installed to `/opt/lab-tester-hub/`, started by OpenRC service `lab-tester-hub`
+- Installed to `/opt/mesh-probe-hub/`, started by OpenRC service `mesh-probe-hub`
 - Entrypoint is `serve.py` — it reads `HUB_PORT` at runtime. Do not move the
   port into the init script's `command_args`: OpenRC expands that at parse
   time, before `start_pre` sources `hub.env`, so the setting would be ignored.
@@ -53,7 +53,7 @@ Diagram: `docs/TOPOLOGY.md`.
     unparseable output) returns `chrony: null` with a `reason`
   - `GET /api/health` — hub self-health for the dashboard's "Hub Health"
     panel: OpenRC service status (`HUB_HEALTH_SERVICES`, default
-    `lab-tester-hub,chronyd,dropbear,open-vm-tools,lldpd`), syslog listener state,
+    `mesh-probe-hub,chronyd,dropbear,open-vm-tools,lldpd`), syslog listener state,
     load average, memory, disk, uptime. Same never-500 discipline as
     `/api/time` — a check that can't run (e.g. `rc-service` missing) reports
     `null`/a reason rather than failing the page
@@ -81,10 +81,10 @@ firewalls and NAT gateways — masks unrecognised capability verbs (e.g.
 `STARTTLS`) with runs of `X`, so `250-XXXXXXXX` in the recorded `output`
 means an inspection engine is editing the session in flight, not blocking
 it. The probe never issues `DATA` — it holds a real envelope conversation
-(`EHLO` → `MAIL FROM:<>` → `RCPT TO:<probe@lab.invalid>` → `RSET` → `QUIT`)
+(`EHLO` → `MAIL FROM:<>` → `RCPT TO:<probe@mesh-probe.invalid>` → `RSET` → `QUIT`)
 and aborts before any message exists. `success` gates on the banner + `EHLO`
 response only, never on `RCPT`: a real relay correctly rejects
-`RCPT TO:<probe@lab.invalid>` with `550`, and that must not paint a healthy
+`RCPT TO:<probe@mesh-probe.invalid>` with `550`, and that must not paint a healthy
 relay red — the response codes are data in `output`, same philosophy as
 `loss`/`pmtu`. The static-target arm is deliberately **ungated** (unlike
 `smb`'s): registering a target is already an explicit opt-in, and the client
@@ -172,7 +172,7 @@ configured to log to the hub simply has an empty `/syslog`.
 **A second writer, hub-authored.** `POST /results` also writes into `syslog`
 directly (`hub/app/pathchange.py`'s `_note_path_change`, not the UDP
 listener) when it detects a traceroute path change — tagged
-`host=lab-tester-hub`, `mnemonic=%LABTESTER-5-PATHCHANGE`, severity 5
+`host=mesh-probe-hub`, `mnemonic=%MESHPROBE-5-PATHCHANGE`, severity 5
 (notice: a path change is not inherently a fault), `source_ip=127.0.0.1`
 (literally true — written locally, never received over UDP). This is the one
 row in this table the hub itself can vouch for, and it gains no special
@@ -193,7 +193,7 @@ Off-switch: `HUB_PATH_CHANGE_ENABLED` (default true).
 each test card links to `/syslog` pinned to ±5 min around *that sample*, and
 the pair header links to the same window plus one link per group behind the
 pair. Group links filter on `host`, which is the name the device puts in its
-own messages — **not** `guestinfo.lab.group`. Where those differ the filtered
+own messages — **not** `guestinfo.meshprobe.group`. Where those differ the filtered
 link comes back empty while the unfiltered window beside it still works, which
 is the intended failure: an empty view rather than a wrong one. The hub does
 not maintain an IP→device map.
@@ -209,7 +209,7 @@ Config: `HUB_SYSLOG_ENABLED`, `HUB_SYSLOG_BIND`, `HUB_SYSLOG_PORT`,
 
 ### Agent self-update
 The hub serves `test-cycle.sh` and `register.sh` from
-`/opt/lab-tester-hub/agent/`; nodes converge on their 5-minute registration run.
+`/opt/mesh-probe-hub/agent/`; nodes converge on their 5-minute registration run.
 Checksums are computed on demand, so editing a file there is the whole
 deploy — no rebuild step. Three gates before anything is trusted: sha256
 match, `sh -n`, and (for test-cycle.sh) a successful real run. The prior
@@ -225,17 +225,17 @@ one-off `scp`) to nodes built before it existed. New clones get it from
 
 ### Node (one per network segment under test)
 - Alpine Linux VM, ~128 MB RAM, DHCP on its interface
-- Installed to `/usr/local/bin/lab-tester/`, config at `/etc/lab-tester/config`
-- Servers: dropbear (SSH), busybox httpd via OpenRC service **`lab-httpd`**,
-  iperf3, `smbd` via OpenRC service **`lab-smbd`** (opt-in, `ENABLE_SMB`),
-  `smtpd` (OpenSMTPD) via OpenRC service **`lab-smtpd`** (opt-in, `ENABLE_SMTP`)
+- Installed to `/usr/local/bin/mesh-probe/`, config at `/etc/mesh-probe/config`
+- Servers: dropbear (SSH), busybox httpd via OpenRC service **`mesh-probe-httpd`**,
+  iperf3, `smbd` via OpenRC service **`mesh-probe-smbd`** (opt-in, `ENABLE_SMB`),
+  `smtpd` (OpenSMTPD) via OpenRC service **`mesh-probe-smtpd`** (opt-in, `ENABLE_SMTP`)
 - Clients: curl, ssh, traceroute, iperf3, smbclient, fping, `nc` (hand-rolled
   SMTP conversation — see below) — driven by cron every 60s
 - Cloned from a single golden template
 - Each cycle's results also render as a compact table (one row per target,
   one column per always-on test — H/S/M/L/T) to `/dev/console`
   (`CONSOLE_OUTPUT`, on by default), the cycle log, a snapshot at
-  `/run/lab-tester/last-cycle.txt`, and on demand via `test-status`
+  `/run/mesh-probe/last-cycle.txt`, and on demand via `test-status`
   (`-f` to follow, `-n N` for history) — the hub dashboard stays the source
   of truth, but this lets an operator at the node's own console or over SSH
   see whether *this* node's tests are passing without opening it. Shown
@@ -251,7 +251,7 @@ one-off `scp`) to nodes built before it existed. New clones get it from
 - ESXi + vCenter, `open-vm-tools` on both roles
 - Two separate golden templates, each built by its own `build-template.sh`
 - Default credentials: **root / lab123** (isolated lab only) — override with
-  `LAB_ROOT_PASSWORD` when running either `build-template.sh`
+  `MESH_PROBE_ROOT_PASSWORD` when running either `build-template.sh`
 - `chrony` on all VMs — the hub's clock is the mesh reference
 - `lldpd` on both roles, always-on, not gated by any `ENABLE_*` flag — LLDP
   neighbor discovery for troubleshooting (e.g. `lldpcli show neighbors` to
@@ -264,12 +264,12 @@ keys set on the VM are read in-guest via `vmware-rpctool "info-get <key>"`:
 
 | Key | Example |
 |-----|---------|
-| `guestinfo.lab.hub_url` | `http://10.0.0.100` |
-| `guestinfo.lab.group` | `site-a` |
-| `guestinfo.lab.subnet` | `10.1.1.0/24` (optional; derived from the DHCP lease if omitted) |
-| `guestinfo.lab.hostname` | `test-node-site-a` (optional) |
-| `guestinfo.lab.dns_server` | `10.0.0.53` (optional; unset skips the DNS test) |
-| `guestinfo.lab.dns_query` | `example.com` (optional) |
+| `guestinfo.meshprobe.hub_url` | `http://10.0.0.100` |
+| `guestinfo.meshprobe.group` | `site-a` |
+| `guestinfo.meshprobe.subnet` | `10.1.1.0/24` (optional; derived from the DHCP lease if omitted) |
+| `guestinfo.meshprobe.hostname` | `test-node-site-a` (optional) |
+| `guestinfo.meshprobe.dns_server` | `10.0.0.53` (optional; unset skips the DNS test) |
+| `guestinfo.meshprobe.dns_query` | `example.com` (optional) |
 
 Precedence in `setup.sh`: **guestinfo → environment → prompt**, except
 `subnet`, which has one extra fallback before the prompt: derived from the
@@ -280,7 +280,7 @@ dashboard and filters syslog by sender; it carries no network-topology
 meaning to the hub.
 
 The table above is read by the nodes. The **hub** has its own, smaller
-set, read by `lab-tester-hub-firstboot` (`hub/services/firstboot.initd`) and
+set, read by `mesh-probe-hub-firstboot` (`hub/services/firstboot.initd`) and
 set on the hub's own VM object, not the nodes':
 
 | Key | Example |
@@ -319,11 +319,11 @@ node/
   build-template.sh   — builds the node golden template
   scripts/            — register.sh, test-cycle.sh, setup.sh, node-setup.sh,
                         test-status.sh (console/SSH results viewer)
-  services/           — httpd.initd (lab-httpd), iperf3.initd,
-                        smbd.initd (lab-smbd), smb.conf,
-                        smtpd.initd (lab-smtpd), smtpd.conf, crontab,
-                        lab-tester-httpd.conf, logrotate.conf,
-                        firstboot.initd (lab-tester-firstboot),
+  services/           — httpd.initd (mesh-probe-httpd), iperf3.initd,
+                        smbd.initd (mesh-probe-smbd), smb.conf,
+                        smtpd.initd (mesh-probe-smtpd), smtpd.conf, crontab,
+                        mesh-probe-httpd.conf, logrotate.conf,
+                        firstboot.initd (mesh-probe-firstboot),
                         login-setup.sh, login-status.sh
   config.sample
 docs/BUILD_GUIDE.md
@@ -351,7 +351,7 @@ These were live bugs that a review caught; each has a comment at the site.
 1. **Hostnames must be unique per clone.** `endpoints.hostname` is the PRIMARY
    KEY, so duplicate names make clones overwrite each other and the mesh
    collapses to one entry — which every node then skips as "self". `setup.sh`
-   sets the hostname; the template ships as `lab-tester-template`.
+   sets the hostname; the template ships as `mesh-probe-template`.
 2. **Timestamps: the hub stamps `received_at` and filters on that.** Nodes
    send ISO-8601 (`2026-09-09T08:00:00Z`); SQLite's `datetime('now', ...)`
    yields `2026-09-09 18:04:04`. String-comparing them is wrong because `T`
@@ -359,13 +359,13 @@ These were live bugs that a review caught; each has a comment at the site.
    `received_at` is stored in SQLite's format; `iso()` converts on the way out
    so browsers parse it as UTC rather than local time.
 3. **The SSH test needs the shared keypair.** It runs `BatchMode=yes` (key auth
-   only). `/etc/lab-tester/id_lab` is generated at build time and trusted in
+   only). `/etc/mesh-probe/id_mesh_probe` is generated at build time and trusted in
    root's `authorized_keys`, so it must survive cloning — the cleanup step
    deletes dropbear *host* keys but deliberately keeps this one.
 4. **`setup.sh` must not copy scripts onto themselves.** Source and destination
-   both resolve to `/usr/local/bin/lab-tester/` when run in place; `cp` exits 1
+   both resolve to `/usr/local/bin/mesh-probe/` when run in place; `cp` exits 1
    and `set -e` aborts the script. It compares the paths first.
-5. **The web server is an OpenRC service (`lab-httpd`).** Launching busybox
+5. **The web server is an OpenRC service (`mesh-probe-httpd`).** Launching busybox
    httpd by hand does not survive a reboot, which silently breaks every HTTP
    test in the mesh.
 6. **`test-cycle.sh` takes a lock.** Traceroutes can outrun the 60s cron
@@ -392,7 +392,7 @@ These were live bugs that a review caught; each has a comment at the site.
    FILE` overwrites wholesale, and Alpine's crontab carries the run-parts
    entries that drive `/etc/periodic/*` — including the daily logrotate run.
    Replacing it left log rotation installed but never triggered, so the disk
-   still filled. It now strips any prior lab-tester block, appends, and
+   still filled. It now strips any prior mesh-probe block, appends, and
    reports how many periodic entries survived.
 13. **Only `test-cycle.sh` auto-updates.** register.sh is the updater; a copy
    of it that parses but fails at runtime would stop registration *and*
@@ -423,7 +423,7 @@ These were live bugs that a review caught; each has a comment at the site.
      service name is bare `smtpd` — as generic and collision-prone as
      `httpd` was — and would let an operator `rc-update add smtpd` by
      accident, bypassing `ENABLE_SMTP` and every safety guard in our own
-     `smtpd.conf`. We ship our own `lab-smtpd` initd instead. `opensmtpd`
+     `smtpd.conf`. We ship our own `mesh-probe-smtpd` initd instead. `opensmtpd`
      also claims `/usr/sbin/sendmail`/`mailq`/`newaliases`; harmless alone,
      but a hard collision if `postfix`/`ssmtp`/`msmtp` are ever added later.
 15. **Agent definitions use `tools:` as a comma-separated string**, not a
@@ -432,8 +432,8 @@ These were live bugs that a review caught; each has a comment at the site.
    `.claude/agents/` overrides `~/.claude/agents/` on a name collision.
 16. **The first-boot service stands down without guestinfo.** `setup.sh`
    prompts interactively, so auto-running it with no keys present would block
-   the boot forever waiting on input. It checks for `lab.hub_url` and
-   `lab.group` first and redirects to `/dev/null`. The interactive
+   the boot forever waiting on input. It checks for `meshprobe.hub_url` and
+   `meshprobe.group` first and redirects to `/dev/null`. The interactive
    counterpart — `hub-setup.sh` / `node-setup.sh`, invited at login — has its
    own guard: `case "$-" in *i*)` (interactive shell only) plus `[ -t 0 ]`
    (real tty), so it never fires for `ssh host cmd` or scp/rsync's

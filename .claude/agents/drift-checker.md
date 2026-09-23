@@ -1,19 +1,19 @@
 ---
 name: drift-checker
-description: Cross-check lab-tester's docs, config samples, UI labels AND agent definitions against what the code actually does — paths, ports, service names, config keys, test types, API endpoints, dependency lists. Use after adding a feature or renaming anything, and before handing work to the user. This project has drifted repeatedly, and stale instructions are worse than missing ones because they get followed.
+description: Cross-check mesh-probe's docs, config samples, UI labels AND agent definitions against what the code actually does — paths, ports, service names, config keys, test types, API endpoints, dependency lists. Use after adding a feature or renaming anything, and before handing work to the user. This project has drifted repeatedly, and stale instructions are worse than missing ones because they get followed.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
 
-You check that lab-tester's documentation and user-facing labels still match
+You check that mesh-probe's documentation and user-facing labels still match
 its code. Drift here is not cosmetic: someone follows `BUILD_GUIDE.md`
 literally while building a VM, so a stale path costs a rebuild.
 
 ## This has happened repeatedly
 
-- `BUILD_GUIDE.md` documented port 5000 and `/opt/lab-tester/scripts/` long
-  after the code moved to port 80 and `/usr/local/bin/lab-tester/`.
-- It said `rc-service httpd` after the service was renamed `lab-httpd`.
+- `BUILD_GUIDE.md` documented port 5000 and `/opt/mesh-probe/scripts/` long
+  after the code moved to port 80 and `/usr/local/bin/mesh-probe/`.
+- It said `rc-service httpd` after the service was renamed `mesh-probe-httpd`.
 - The dashboard legend read `H=HTTP S=SSH T=Trace I=iperf` after two new test
   types were added, so cells rendered `M` and `D` with nothing explaining them.
 - `config.sample` lacked keys `setup.sh` had begun writing.
@@ -29,8 +29,8 @@ agent dir, hub port.
 
 **Service names.** Every `rc-service` / `rc-update` name in the docs must
 exist as a file in `node/services/` or be created by a build script.
-Current set: `lab-httpd`, `iperf3`, `lab-smbd`, `lab-smtpd`,
-`lab-tester-firstboot`, `lab-tester-hub`, `lab-tester-hub-firstboot`, plus
+Current set: `mesh-probe-httpd`, `iperf3`, `mesh-probe-smbd`, `mesh-probe-smtpd`,
+`mesh-probe-firstboot`, `mesh-probe-hub`, `mesh-probe-hub-firstboot`, plus
 stock `crond`, `dropbear`, `chronyd`, `open-vm-tools`, `lldpd` (both roles,
 always-on).
 
@@ -56,14 +56,14 @@ documented in the guide and `config.sample`, exactly — a typo'd key silently
 falls through to a prompt.
 
 **Setup stamps — four places, per role.** Every stamp path (hub:
-`/etc/lab-tester-hub/.setup-done`; node: `/etc/lab-tester/.firstboot-done`
-and `/etc/lab-tester/.setup-done`) must agree across: the wizard/service that
+`/etc/mesh-probe-hub/.setup-done`; node: `/etc/mesh-probe/.firstboot-done`
+and `/etc/mesh-probe/.setup-done`) must agree across: the wizard/service that
 writes it, any other writer (`firstboot.initd` writes the node's
 `.setup-done` too, with a distinct provenance word), the login hook that
 reads it to decide whether to prompt, and the matching `build-template.sh`'s
 cleanup that clears it. A stamp cleared in one path but not the guide's
 documented re-clean command (or vice versa) is exactly the class of bug that
-already shipped once for `/etc/lab-tester/config` itself.
+already shipped once for `/etc/mesh-probe/config` itself.
 
 **Login hooks.** Every `/etc/profile.d/*` file a `build-template.sh` installs
 must exist as a real file in the matching `services/` directory, and must
@@ -87,7 +87,7 @@ with the same rigour as the guide, and treat findings as higher severity.
 
 Every project-specific agent has already drifted at least once:
 
-- `lab-tester-diagnostician` taught that an empty 10-minute window means "node
+- `mesh-probe-diagnostician` taught that an empty 10-minute window means "node
   writing timestamps in local time". That was a real bug, since fixed by
   having the hub stamp `received_at` — so the example sent the diagnostician
   chasing something structurally impossible while the real cause (a rejected

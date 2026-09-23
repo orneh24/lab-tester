@@ -1,4 +1,4 @@
-# Lab Tester — System Topology
+# Mesh Probe — System Topology
 
 Visual companion to the architecture in `CLAUDE.md` and the build order in
 `DEPLOYMENT.md`. The network between nodes is drawn as one opaque cloud
@@ -34,7 +34,7 @@ flowchart LR
   channel is independent of, and does not need to traverse, the same path
   the tests themselves exercise.
 - **The network under test** is everything between the nodes: however many
-  hops, whatever vendor, however it's configured. Lab Tester treats it as a
+  hops, whatever vendor, however it's configured. Mesh Probe treats it as a
   black box and measures what comes out the other side — HTTP, SSH, SMB,
   SMTP, iperf3, loss/jitter, path MTU, traceroute.
 - **Syslog is optional and one-way.** Any device in that network *may* be

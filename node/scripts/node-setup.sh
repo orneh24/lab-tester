@@ -1,6 +1,6 @@
 #!/bin/sh
 # node-setup.sh — interactive first-time configuration prompt for a
-# lab-tester node.
+# mesh-probe node.
 #
 # Run automatically at first interactive login (see services/login-setup.sh)
 # when the node hasn't been configured yet, or by hand at any time. Safe to
@@ -15,10 +15,10 @@
 
 set -eu
 
-CONF_DIR="/etc/lab-tester"
+CONF_DIR="/etc/mesh-probe"
 CONFIG="${CONF_DIR}/config"
 STAMP="${CONF_DIR}/.setup-done"
-SETUP="/usr/local/bin/lab-tester/setup.sh"
+SETUP="/usr/local/bin/mesh-probe/setup.sh"
 
 case "${1:-}" in
     "") FORCE="" ;;
@@ -46,7 +46,7 @@ if [ -f "$CONFIG" ] && [ ! -f "$STAMP" ] && [ -z "$FORCE" ]; then
     exit 0
 fi
 
-echo "=== lab-tester node setup ==="
+echo "=== mesh-probe node setup ==="
 echo
 
 CURRENT_HOSTNAME=$(hostname 2>/dev/null || echo unknown)

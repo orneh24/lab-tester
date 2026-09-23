@@ -1,7 +1,7 @@
 #requires -Modules VMware.VimAutomation.Core
 <#
 .SYNOPSIS
-    Deploys a lab-tester hub and N nodes from existing vCenter templates.
+    Deploys a mesh-probe hub and N nodes from existing vCenter templates.
 
 .DESCRIPTION
     Clones one hub VM and (by default) three node VMs from the two golden
@@ -42,20 +42,20 @@
 .PARAMETER HubIP
     Hub's static IP in CIDR form, e.g. "10.0.0.100/24". Written to
     guestinfo.hub.ip, read by the hub's firstboot service
-    (lab-tester-hub-firstboot). Required — the hub needs a predictable
+    (mesh-probe-hub-firstboot). Required — the hub needs a predictable
     address for nodes to register against and for an operator to reach.
 
 .PARAMETER HubGateway
     Hub's default gateway. Written to guestinfo.hub.gateway.
 
 .PARAMETER HubVMName
-    vCenter display name for the hub clone. Default: lab-tester-hub.
+    vCenter display name for the hub clone. Default: mesh-probe-hub.
 
 .PARAMETER NodeCount
     Number of nodes to deploy. Default: 3.
 
 .PARAMETER NodeNamePrefix
-    Prefix for each node's vCenter VM name (<prefix>-<group>). guestinfo.lab.
+    Prefix for each node's vCenter VM name (<prefix>-<group>). guestinfo.meshprobe.
     hostname is deliberately never set by this script — CLAUDE.md documents
     the same derivation for a node's in-guest hostname when it's left unset,
     so the vCenter VM name and the eventual in-guest hostname naturally end
@@ -64,19 +64,19 @@
     (default in node/config.sample: test-node) or that matching breaks.
 
 .PARAMETER NodeGroups
-    One group label per node (guestinfo.lab.group) — an arbitrary tag that
+    One group label per node (guestinfo.meshprobe.group) — an arbitrary tag that
     clusters nodes on the dashboard and filters syslog by sender; it carries
     no network-topology meaning to the hub. Must supply at least $NodeCount
     entries. Default: site-a, site-b, site-c.
 
 .PARAMETER NodeSubnets
     Optional, one entry per node (CIDR, e.g. "10.1.1.0/24"), written to
-    guestinfo.lab.subnet. Leave unset (the default) to let each node derive
+    guestinfo.meshprobe.subnet. Leave unset (the default) to let each node derive
     its subnet from its own DHCP lease at first boot — the normal path;
     only override where that derivation would be wrong.
 
 .PARAMETER DnsServer
-    Optional. Applied to every node as guestinfo.lab.dns_server. Omit to
+    Optional. Applied to every node as guestinfo.meshprobe.dns_server. Omit to
     leave the DNS test disabled on every node (the documented default —
     "unset skips the DNS test").
 
@@ -97,15 +97,15 @@
 
 .EXAMPLE
     Connect-VIServer vcenter.lab.local
-    ./Deploy-LabTester.ps1 -HubTemplate lab-tester-hub-template `
-        -NodeTemplate lab-tester-node-template -PortGroup "VM Network" `
+    ./Deploy-MeshProbe.ps1 -HubTemplate mesh-probe-hub-template `
+        -NodeTemplate mesh-probe-node-template -PortGroup "VM Network" `
         -VMHost esxi01.lab.local -Datastore datastore1 `
         -HubIP 10.0.0.100/24 -HubGateway 10.0.0.1
 
     Deploys the hub and 3 nodes (site-a/site-b/site-c) on one flat network.
 
 .EXAMPLE
-    ./Deploy-LabTester.ps1 -HubTemplate hub-tmpl -NodeTemplate node-tmpl `
+    ./Deploy-MeshProbe.ps1 -HubTemplate hub-tmpl -NodeTemplate node-tmpl `
         -PortGroup "VM Network" -VMHost esxi01 -Datastore ds1 `
         -HubIP 10.0.0.100/24 -HubGateway 10.0.0.1 -WhatIf
 
@@ -133,7 +133,7 @@ param(
     [ValidatePattern('^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$')]
     [string] $HubIP,
     [Parameter(Mandatory)] [string] $HubGateway,
-    [string] $HubVMName = "lab-tester-hub",
+    [string] $HubVMName = "mesh-probe-hub",
 
     [ValidateRange(1, 64)] [int] $NodeCount = 3,
     [string] $NodeNamePrefix = "test-node",
@@ -225,14 +225,14 @@ for ($i = 0; $i -lt $NodeCount; $i++) {
     $nodeCloneParams = New-CloneParams -Name $nodeName -Template $NodeTemplate
     $nodeVM = New-VM @nodeCloneParams
 
-    Set-Guestinfo -VM $nodeVM -Key "guestinfo.lab.hub_url" -Value $hubUrl
-    Set-Guestinfo -VM $nodeVM -Key "guestinfo.lab.group" -Value $group
+    Set-Guestinfo -VM $nodeVM -Key "guestinfo.meshprobe.hub_url" -Value $hubUrl
+    Set-Guestinfo -VM $nodeVM -Key "guestinfo.meshprobe.group" -Value $group
     if ($NodeSubnets) {
-        Set-Guestinfo -VM $nodeVM -Key "guestinfo.lab.subnet" -Value $NodeSubnets[$i]
+        Set-Guestinfo -VM $nodeVM -Key "guestinfo.meshprobe.subnet" -Value $NodeSubnets[$i]
     }
     if ($DnsServer) {
-        Set-Guestinfo -VM $nodeVM -Key "guestinfo.lab.dns_server" -Value $DnsServer
-        Set-Guestinfo -VM $nodeVM -Key "guestinfo.lab.dns_query" -Value $DnsQuery
+        Set-Guestinfo -VM $nodeVM -Key "guestinfo.meshprobe.dns_server" -Value $DnsServer
+        Set-Guestinfo -VM $nodeVM -Key "guestinfo.meshprobe.dns_query" -Value $DnsQuery
     }
 
     if ($PowerOn) {

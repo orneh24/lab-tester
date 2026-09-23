@@ -1,6 +1,6 @@
 ---
 name: regression-tester
-description: Lab-tester regression gate. Invoke before handing any change to the user, and after any edit under node/, hub/ or the build scripts — it re-runs the fixed battery of checks guarding every numbered constraint in CLAUDE.md, each of which is a bug that already shipped once, plus the wire contract, the two correlation surfaces (R21 /api/time, R22 dashboard syslog links), and the first-login setup prompt (R23-R25) that have no numbered constraint behind them. Reports pass / fail / not-run per constraint with the command output as evidence, and blocks the handover on any fail.
+description: Mesh-probe regression gate. Invoke before handing any change to the user, and after any edit under node/, hub/ or the build scripts — it re-runs the fixed battery of checks guarding every numbered constraint in CLAUDE.md, each of which is a bug that already shipped once, plus the wire contract, the two correlation surfaces (R21 /api/time, R22 dashboard syslog links), and the first-login setup prompt (R23-R25) that have no numbered constraint behind them. Reports pass / fail / not-run per constraint with the command output as evidence, and blocks the handover on any fail.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -49,7 +49,7 @@ entry, which every node then skips as "self".
 
 ```sh
 grep -n "hostname TEXT PRIMARY KEY" hub/app/app.py
-grep -n "lab-tester-template" node/build-template.sh
+grep -n "mesh-probe-template" node/build-template.sh
 grep -n "/etc/hostname" node/scripts/setup.sh
 ```
 
@@ -111,16 +111,16 @@ Pass: both end in `Z`. A space-separated value from either is a fail.
 `BatchMode=yes`, key auth only.
 
 ```sh
-grep -n "id_lab" node/build-template.sh
+grep -n "id_mesh_probe" node/build-template.sh
 grep -n "dropbear_.*host_key" node/build-template.sh
 ```
 
-Pass: cleanup deletes dropbear *host* keys and leaves `/etc/lab-tester/id_lab`
+Pass: cleanup deletes dropbear *host* keys and leaves `/etc/mesh-probe/id_mesh_probe`
 alone. A cleanup line that removes the keypair is a fail however it is
 commented.
 
 **R4 — `setup.sh` must not copy scripts onto themselves.** Source and
-destination both resolve to `/usr/local/bin/lab-tester/` when run in place;
+destination both resolve to `/usr/local/bin/mesh-probe/` when run in place;
 `cp` exits 1 and `set -e` aborts the install half-done.
 
 ```sh
@@ -129,10 +129,10 @@ sed -n '/Install scripts/,/crontab/p' node/scripts/setup.sh
 
 Pass: the two paths are compared before the `cp` pair.
 
-**R5 — the web server is the OpenRC service `lab-httpd`.**
+**R5 — the web server is the OpenRC service `mesh-probe-httpd`.**
 
 ```sh
-grep -rn "rc-update add lab-httpd" node/
+grep -rn "rc-update add mesh-probe-httpd" node/
 grep -rnE '^[^#]*busybox httpd|^[^#]*\bhttpd -p' node/scripts/
 ```
 
@@ -220,7 +220,7 @@ left rotation installed but never triggered, so the disk still filled.
 sed -n '/Install crontab/,/periodic entries/p' node/scripts/setup.sh
 ```
 
-Pass: `crontab -l` read first, any prior lab-tester block stripped, new
+Pass: `crontab -l` read first, any prior mesh-probe block stripped, new
 entries appended, and the surviving `run-parts` count logged.
 
 **R13 — only `test-cycle.sh` auto-updates.**
@@ -261,7 +261,7 @@ passes. The `samba` metapackage drags in winbind and the AD domain-controller
 machinery; `samba-server` alone does not depend on either. `opensmtpd-openrc`
 would install a bare `smtpd` OpenRC service an operator could enable by
 accident, bypassing `ENABLE_SMTP` and every safety guard in our own
-`smtpd.conf` — this project ships its own `lab-smtpd` initd instead.
+`smtpd.conf` — this project ships its own `mesh-probe-smtpd` initd instead.
 
 **R14b — the SMTP probe server can never send mail.**
 
@@ -294,7 +294,7 @@ interactively, so auto-running it with no keys present would block the boot
 forever on a console nobody is watching.
 
 ```sh
-grep -n "lab.hub_url\|lab.group\|/dev/null" node/services/firstboot.initd
+grep -n "meshprobe.hub_url\|meshprobe.group\|/dev/null" node/services/firstboot.initd
 ```
 
 Pass: both keys checked before `setup.sh` is invoked, and stdin redirected
@@ -700,7 +700,7 @@ workflow. Shim `ping`, `ip`, `ssh`, `dig`, `traceroute`, `iperf3`,
 let the `0000` bug through in the first place.
 
 Two edits to the scripts are permitted, because off Alpine there is no
-alternative: redirecting the two OS-root paths (`/etc/lab-tester` and the
+alternative: redirecting the two OS-root paths (`/etc/mesh-probe` and the
 `/run` lock dir) into fixture directories. Nothing else. Diff your copy
 against the original, confirm only those lines differ, and **say in the report
 which lines you changed** — an unqualified claim of "ran unmodified" is not

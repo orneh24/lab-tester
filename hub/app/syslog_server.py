@@ -1,4 +1,4 @@
-"""UDP syslog receiver for the lab-tester hub.
+"""UDP syslog receiver for the mesh-probe hub.
 
 Listens on UDP/514 in a daemon thread and stores parsed messages in the same
 SQLite database as the test results, so the dashboard can link a failing pair

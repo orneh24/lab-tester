@@ -17,8 +17,8 @@
 # already has -- writing "configured (guestinfo)" here rather than reusing
 # node-setup.sh's own words keeps the provenance visible in one `cat`.
 
-name="lab-tester-firstboot"
-description="Configure lab-tester on first boot from VMware guestinfo"
+name="mesh-probe-firstboot"
+description="Configure mesh-probe on first boot from VMware guestinfo"
 
 depend() {
     need net
@@ -27,9 +27,9 @@ depend() {
 
 command_background="no"
 
-STAMP="/etc/lab-tester/.firstboot-done"
-SETUP_STAMP="/etc/lab-tester/.setup-done"
-SETUP="/usr/local/bin/lab-tester/setup.sh"
+STAMP="/etc/mesh-probe/.firstboot-done"
+SETUP_STAMP="/etc/mesh-probe/.setup-done"
+SETUP="/usr/local/bin/mesh-probe/setup.sh"
 
 _guestinfo() {
     if command -v vmware-rpctool >/dev/null 2>&1; then
@@ -41,7 +41,7 @@ _guestinfo() {
 
 start() {
     if [ -f "$STAMP" ]; then
-        einfo "lab-tester already configured; nothing to do"
+        einfo "mesh-probe already configured; nothing to do"
         return 0
     fi
 
@@ -50,29 +50,29 @@ start() {
         return 0
     fi
 
-    _hub=$(_guestinfo "lab.hub_url")
-    _group=$(_guestinfo "lab.group")
+    _hub=$(_guestinfo "meshprobe.hub_url")
+    _group=$(_guestinfo "meshprobe.group")
 
     case "$_hub" in *"No value found"*) _hub="" ;; esac
     case "$_group" in *"No value found"*) _group="" ;; esac
 
     if [ -z "$_hub" ] || [ -z "$_group" ]; then
-        ewarn "guestinfo.lab.hub_url / guestinfo.lab.group not set"
+        ewarn "guestinfo.meshprobe.hub_url / guestinfo.meshprobe.group not set"
         ewarn "skipping auto-setup — run $SETUP by hand to configure"
         return 0
     fi
 
-    ebegin "Configuring lab-tester from guestinfo"
+    ebegin "Configuring mesh-probe from guestinfo"
 
     # stdin from /dev/null so any unexpected prompt fails fast rather than
     # hanging the boot waiting for input that will never come.
-    if "$SETUP" < /dev/null >> /var/log/lab-tester/firstboot.log 2>&1; then
-        mkdir -p /etc/lab-tester
+    if "$SETUP" < /dev/null >> /var/log/mesh-probe/firstboot.log 2>&1; then
+        mkdir -p /etc/mesh-probe
         date -u '+%Y-%m-%dT%H:%M:%SZ' > "$STAMP"
         date -u '+%Y-%m-%dT%H:%M:%SZ configured (guestinfo)' > "$SETUP_STAMP"
         eend 0
     else
-        eend 1 "setup failed — see /var/log/lab-tester/firstboot.log"
+        eend 1 "setup failed — see /var/log/mesh-probe/firstboot.log"
     fi
 
     return 0

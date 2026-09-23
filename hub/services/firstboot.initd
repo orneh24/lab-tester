@@ -2,25 +2,25 @@
 # OpenRC service: auto-configure the hub's static IP from guestinfo on
 # first boot.
 #
-# Mirrors node's lab-tester-firstboot: only acts when guestinfo actually
+# Mirrors node's mesh-probe-firstboot: only acts when guestinfo actually
 # carries both required keys. With neither present, this stands down rather
 # than prompting -- an OpenRC start() has no reliable attached tty to read
 # from, so it must never be the thing that blocks the boot. The interactive
 # path lives in hub-setup.sh instead, invited at first login by
 # login-setup.sh, where a real tty is guaranteed.
 
-name="lab-tester-hub-firstboot"
+name="mesh-probe-hub-firstboot"
 description="Configure hub static IP from VMware guestinfo on first boot"
 
 depend() {
     need net
     after open-vm-tools
-    before lab-tester-hub
+    before mesh-probe-hub
 }
 
 command_background="no"
 
-CONF_DIR="/etc/lab-tester-hub"
+CONF_DIR="/etc/mesh-probe-hub"
 STAMP="${CONF_DIR}/.setup-done"
 
 _guestinfo() {

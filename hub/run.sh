@@ -1,6 +1,6 @@
 #!/bin/sh
-# Foreground launcher for the lab-tester hub (manual runs and debugging).
-# In production the OpenRC service lab-tester-hub runs serve.py directly.
+# Foreground launcher for the mesh-probe hub (manual runs and debugging).
+# In production the OpenRC service mesh-probe-hub runs serve.py directly.
 
 cd "$(dirname "$0")" || exit 1
 

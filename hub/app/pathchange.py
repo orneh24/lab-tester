@@ -19,7 +19,7 @@ import re
 # own split_message() can never disagree about what a hub-authored path-change
 # row looks like.
 # ---------------------------------------------------------------------------
-HOST = "lab-tester-hub"
+HOST = "mesh-probe-hub"
 SOURCE_IP = "127.0.0.1"          # literally true: this row is written
                                   # locally, never received over UDP.
 FACILITY = 16                    # local0 — customary "local use" facility
@@ -28,7 +28,7 @@ SEVERITY = 5                     # notice: a path change (ECMP flip, working
                                   # failover) is not inherently a fault; 3/err
                                   # would paint a healthy lab red under an
                                   # "err or worse" filter.
-MNEMONIC = "%LABTESTER-5-PATHCHANGE"
+MNEMONIC = "%MESHPROBE-5-PATHCHANGE"
 
 HOP_LINE_RE = re.compile(r"^\s*(\d{1,3})\s+(\S.*)$")
 IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")

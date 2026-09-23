@@ -1,12 +1,12 @@
 ---
-name: lab-tester-node
-description: Alpine node conventions for lab-tester — POSIX sh constraints, /etc/lab-tester/config, register.sh and test-cycle.sh structure, cron cadence, and golden-image/clone deployment. Read before editing anything under node/ or changing what a cloned node does on boot.
-origin: lab-tester
+name: mesh-probe-node
+description: Alpine node conventions for mesh-probe — POSIX sh constraints, /etc/mesh-probe/config, register.sh and test-cycle.sh structure, cron cadence, and golden-image/clone deployment. Read before editing anything under node/ or changing what a cloned node does on boot.
+origin: mesh-probe
 ---
 
-# Lab-Tester Node
+# Mesh-Probe Node
 
-Nodes are ~128 MB Alpine clones from one golden image. They get an IP by DHCP, register with the hub, and run a test cycle from cron. There is no orchestration — each node is independent and stateless apart from `/etc/lab-tester/config`.
+Nodes are ~128 MB Alpine clones from one golden image. They get an IP by DHCP, register with the hub, and run a test cycle from cron. There is no orchestration — each node is independent and stateless apart from `/etc/mesh-probe/config`.
 
 ## When to Activate
 
@@ -28,7 +28,7 @@ Nodes are ~128 MB Alpine clones from one golden image. They get an IP by DHCP, r
 
 ## Config
 
-`/etc/lab-tester/config` (from `node/config.sample`), sourced by both scripts: `HUB_URL` (no trailing slash), `GROUP_NAME` and `SUBNET` — plus optional `ENABLE_IPERF`, `ENABLE_SMB`, `ENABLE_SMTP`, `TRACEROUTE_INTERVAL`, `TRACEROUTE_MAX_HOPS`, `PMTU_SIZE`, `DNS_SERVER`, `DNS_QUERY`, `AGENT_AUTOUPDATE`.
+`/etc/mesh-probe/config` (from `node/config.sample`), sourced by both scripts: `HUB_URL` (no trailing slash), `GROUP_NAME` and `SUBNET` — plus optional `ENABLE_IPERF`, `ENABLE_SMB`, `ENABLE_SMTP`, `TRACEROUTE_INTERVAL`, `TRACEROUTE_MAX_HOPS`, `PMTU_SIZE`, `DNS_SERVER`, `DNS_QUERY`, `AGENT_AUTOUPDATE`.
 
 **`register.sh` still requires all three of `HUB_URL`, `GROUP_NAME` and `SUBNET`** to be non-empty in the config file at cron time, and `exit 1`s on the first one that is empty. `SUBNET` is the one exception at the *operator-input* layer, though: `setup.sh`'s `derive_subnet()` computes it from the interface's current DHCP lease (address + prefix already give you the network — see the no-bitwise-awk note above) and only falls through to guestinfo/env/prompt if that fails. `HUB_URL` and `GROUP_NAME` are still not derived or defaulted from anything. Per-clone values are therefore: hostname, `GROUP_NAME` — `SUBNET` normally needs nothing at all now.
 
@@ -38,11 +38,11 @@ Be conservative about adding a required variable that isn't derivable the way `S
 
 `register.sh` — boot + every 5 min. Detects hostname and the first global IPv4 (`ip -4 -o addr show scope global`), POSTs `/register`, retries 3× with 5 s backoff. Re-registration is what makes DHCP renewals invisible to the rest of the system; don't lengthen the interval past the lease's usable window.
 
-`test-cycle.sh` — every minute. Pulls `/endpoints`, validates JSON with `jq empty`, skips self by hostname, then per peer runs HTTP → SSH → PMTU → loss (all four always on, no gate — loss is fping-based packet loss/jitter), with traceroute only on `TRACEROUTE_INTERVAL` or right after an HTTP/SSH failure, iperf3 when `ENABLE_IPERF=true`, smb (fetching `probe.bin` via `smbclient`) when `ENABLE_SMB=true` — no contention retry, since `smbd` forks per connection — and smtp (an `EHLO`/`MAIL`/`RCPT`/`RSET`/`QUIT` conversation via hand-rolled `nc`, never `DATA`) when `ENABLE_SMTP=true`. `loss`'s `success` is `true` on any reply at all; the loss percentage lives in `output`, not the success field — never treat nonzero loss as a failure, that's the signal this test exists to report. `smtp`'s `success` gates on the banner+EHLO only, never on RCPT (a real relay correctly rejects the probe's `RCPT TO:<probe@lab.invalid>` with 550) — capability tokens masked as runs of `X` in `output` mean an SMTP ALG / ESMTP inspection engine is rewriting the session, a finding, not a failure. Static targets from `/targets` run whichever tests each one declares — smtp's static-target arm is deliberately ungated, unlike smb's. DNS runs once per cycle against `DNS_SERVER`, not per target — it is a per-source test, which is why the dashboard renders it in its own panel rather than as a matrix column. All results POST in one payload.
+`test-cycle.sh` — every minute. Pulls `/endpoints`, validates JSON with `jq empty`, skips self by hostname, then per peer runs HTTP → SSH → PMTU → loss (all four always on, no gate — loss is fping-based packet loss/jitter), with traceroute only on `TRACEROUTE_INTERVAL` or right after an HTTP/SSH failure, iperf3 when `ENABLE_IPERF=true`, smb (fetching `probe.bin` via `smbclient`) when `ENABLE_SMB=true` — no contention retry, since `smbd` forks per connection — and smtp (an `EHLO`/`MAIL`/`RCPT`/`RSET`/`QUIT` conversation via hand-rolled `nc`, never `DATA`) when `ENABLE_SMTP=true`. `loss`'s `success` is `true` on any reply at all; the loss percentage lives in `output`, not the success field — never treat nonzero loss as a failure, that's the signal this test exists to report. `smtp`'s `success` gates on the banner+EHLO only, never on RCPT (a real relay correctly rejects the probe's `RCPT TO:<probe@mesh-probe.invalid>` with 550) — capability tokens masked as runs of `X` in `output` mean an SMTP ALG / ESMTP inspection engine is rewriting the session, a finding, not a failure. Static targets from `/targets` run whichever tests each one declares — smtp's static-target arm is deliberately ungated, unlike smb's. DNS runs once per cycle against `DNS_SERVER`, not per target — it is a per-source test, which is why the dashboard renders it in its own panel rather than as a matrix column. All results POST in one payload.
 
 Each test function returns one JSON object and is isolated with `|| true` so a failure never aborts the cycle. Build JSON with `printf`, and escape any free text through `json_escape()` (`jq -Rs '.'`) — raw command output contains quotes and newlines that will corrupt the payload otherwise.
 
-`node-setup.sh` is a wizard *wrapper*, not a fourth script with its own config logic — it asks permission (`Configure this node now? [Y/n]`) and, on yes, calls `setup.sh` unmodified. All value collection stays in `setup.sh` because `firstboot.initd` calls only `setup.sh`; any collection logic added to the wizard instead would be invisible on the zero-touch guestinfo path. The wizard's own job is the stamp bookkeeping (`/etc/lab-tester/.setup-done`) and the `--force` discard-confirmation for an existing config — see `docs/BUILD_GUIDE.md` §6.5b for the full stamp/provenance contract.
+`node-setup.sh` is a wizard *wrapper*, not a fourth script with its own config logic — it asks permission (`Configure this node now? [Y/n]`) and, on yes, calls `setup.sh` unmodified. All value collection stays in `setup.sh` because `firstboot.initd` calls only `setup.sh`; any collection logic added to the wizard instead would be invisible on the zero-touch guestinfo path. The wizard's own job is the stamp bookkeeping (`/etc/mesh-probe/.setup-done`) and the `--force` discard-confirmation for an existing config — see `docs/BUILD_GUIDE.md` §6.5b for the full stamp/provenance contract.
 
 Timeouts are deliberately short so a full cycle fits inside 60 s — read the actual values off `test-cycle.sh`, which owns them. What matters when you add a test is the budgeting rule: worst case × number of endpoints against the cron interval. A cycle that overruns overlaps with the next one and skews every timing it reports, which is why traceroute is rationed rather than run per cycle.
 
@@ -71,19 +71,19 @@ needs an access list before it will answer.
 
 ## Services
 
-Servers on each node: dropbear (SSH), busybox httpd (`lab-tester-httpd.conf`), iperf3 (`iperf3.initd`), smbd (`smbd.initd` → `lab-smbd`, opt-in via `ENABLE_SMB`), and smtpd (`smtpd.initd` → `lab-smtpd`, opt-in via `ENABLE_SMTP` — OpenSMTPD, never the `opensmtpd-openrc` package, whose bare `smtpd` service name would bypass our gate). They exist so *other* nodes can test *this* one — a node that fails only inbound tests usually has a service down, not a routing problem.
+Servers on each node: dropbear (SSH), busybox httpd (`mesh-probe-httpd.conf`), iperf3 (`iperf3.initd`), smbd (`smbd.initd` → `mesh-probe-smbd`, opt-in via `ENABLE_SMB`), and smtpd (`smtpd.initd` → `mesh-probe-smtpd`, opt-in via `ENABLE_SMTP` — OpenSMTPD, never the `opensmtpd-openrc` package, whose bare `smtpd` service name would bypass our gate). They exist so *other* nodes can test *this* one — a node that fails only inbound tests usually has a service down, not a routing problem.
 
 `lldpd` also runs on every node, always-on and not gated by any flag. It isn't part of the test harness — no result type, never in the matrix — it's there for `lldpcli show neighbors` when troubleshooting cabling or a wrong port-group assignment.
 
-`node/services/login-setup.sh` is installed to `/etc/profile.d/lab-tester-node-setup.sh` — sourced at interactive login, not a service, not chmod +x. It invites `node-setup.sh` (symlinked onto PATH, same as `set-static-ip`/`hub-setup.sh` on the hub) behind a three-layer guard: interactive shell, real tty, `.setup-done` absent.
+`node/services/login-setup.sh` is installed to `/etc/profile.d/mesh-probe-node-setup.sh` — sourced at interactive login, not a service, not chmod +x. It invites `node-setup.sh` (symlinked onto PATH, same as `set-static-ip`/`hub-setup.sh` on the hub) behind a three-layer guard: interactive shell, real tty, `.setup-done` absent.
 
 ## Cron
 
-`node/services/crontab`: register every 5 min, test cycle every minute, both logging to `/var/log/lab-tester/`. Cron granularity is one minute. Ensure `/var/log/lab-tester/` exists in the image and that logs rotate or truncate; a full disk on a 2 GB image is a silent failure mode.
+`node/services/crontab`: register every 5 min, test cycle every minute, both logging to `/var/log/mesh-probe/`. Cron granularity is one minute. Ensure `/var/log/mesh-probe/` exists in the image and that logs rotate or truncate; a full disk on a 2 GB image is a silent failure mode.
 
 ## Cloning
 
-Golden image → clone → boot. With `guestinfo.lab.hub_url`/`.group` set, `firstboot.initd` configures and registers with no console session. Without them, it stands down and `node-setup.sh` prompts at the first interactive login instead — decline it and edit `/etc/lab-tester/config` by hand, or run `setup.sh`/`node-setup.sh` yourself any time. Either way: edit hostname/`GROUP_NAME` (`SUBNET` normally derives itself from DHCP) → restart or run `register.sh`. Hostname uniqueness is mandatory: the hub keys `endpoints` on hostname, so two clones sharing one overwrite each other. Clear machine-id/SSH host keys, the config, and both stamps (`.firstboot-done`, `.setup-done`) in the image prep step, not after cloning.
+Golden image → clone → boot. With `guestinfo.meshprobe.hub_url`/`.group` set, `firstboot.initd` configures and registers with no console session. Without them, it stands down and `node-setup.sh` prompts at the first interactive login instead — decline it and edit `/etc/mesh-probe/config` by hand, or run `setup.sh`/`node-setup.sh` yourself any time. Either way: edit hostname/`GROUP_NAME` (`SUBNET` normally derives itself from DHCP) → restart or run `register.sh`. Hostname uniqueness is mandatory: the hub keys `endpoints` on hostname, so two clones sharing one overwrite each other. Clear machine-id/SSH host keys, the config, and both stamps (`.firstboot-done`, `.setup-done`) in the image prep step, not after cloning.
 
 ## Anti-Patterns
 
@@ -102,10 +102,10 @@ Golden image → clone → boot. With `guestinfo.lab.hub_url`/`.group` set, `fir
 
 # BAD: an unguarded `read` anywhere the login hook can reach — closed stdin under set -e aborts the whole script; use `read -r VAR || VAR=""`, or `if ! read` when a default would otherwise fire on EOF
 
-# BAD: sealing a golden image with /etc/lab-tester/.setup-done present — every clone's login prompt stays silent forever, with no error to see
+# BAD: sealing a golden image with /etc/mesh-probe/.setup-done present — every clone's login prompt stays silent forever, with no error to see
 ```
 
 ## Related Skills
 
-- lab-tester-hub-api
-- lab-tester-troubleshooting
+- mesh-probe-hub-api
+- mesh-probe-troubleshooting

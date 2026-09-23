@@ -5,7 +5,7 @@
 # One workstation, many simulated nodes: identity comes from the `hostname`
 # shim (DEV_HOSTNAME below), not from any config key — real nodes work the
 # same way, register.sh/test-cycle.sh only ever call `hostname`; it's
-# setup.sh that sets the OS hostname from LAB_HOSTNAME once, at setup time.
+# setup.sh that sets the OS hostname from NODE_HOSTNAME once, at setup time.
 set -eu
 
 usage() {
@@ -85,11 +85,11 @@ EOF
 # also what proves that override is real and not just documented.
 # -------------------------------------------------------------------
 mkdir -p "$NODE_DIR/scripts"
-sed "s#^CONFIG=\"/etc/lab-tester/config\"#CONFIG=\"$NODE_DIR/config\"#" \
+sed "s#^CONFIG=\"/etc/mesh-probe/config\"#CONFIG=\"$NODE_DIR/config\"#" \
     "$ROOT/node/scripts/register.sh" > "$NODE_DIR/scripts/register.sh"
-sed -e "s#^CONFIG=\"/etc/lab-tester/config\"#CONFIG=\"$NODE_DIR/config\"#" \
-    -e "s#^LOCK_DIR=\"/run/lab-tester-test-cycle.lock\"#LOCK_DIR=\"$NODE_DIR/run/lock\"#" \
-    -e "s#^TRACEROUTE_STAMP=\"/run/lab-tester-last-traceroute\"#TRACEROUTE_STAMP=\"$NODE_DIR/run/last-traceroute\"#" \
+sed -e "s#^CONFIG=\"/etc/mesh-probe/config\"#CONFIG=\"$NODE_DIR/config\"#" \
+    -e "s#^LOCK_DIR=\"/run/mesh-probe-test-cycle.lock\"#LOCK_DIR=\"$NODE_DIR/run/lock\"#" \
+    -e "s#^TRACEROUTE_STAMP=\"/run/mesh-probe-last-traceroute\"#TRACEROUTE_STAMP=\"$NODE_DIR/run/last-traceroute\"#" \
     "$ROOT/node/scripts/test-cycle.sh" > "$NODE_DIR/scripts/test-cycle.sh"
 chmod +x "$NODE_DIR/scripts"/*.sh
 

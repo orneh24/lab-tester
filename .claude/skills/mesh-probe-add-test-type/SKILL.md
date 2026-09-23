@@ -1,10 +1,10 @@
 ---
-name: lab-tester-add-test-type
-description: Checklist and decision framework for adding a new connectivity test type to lab-tester (the pattern behind smb, loss, and smtp) — where it must be wired, and the judgment calls that come before the wiring. Read before starting a new test type, not after.
-origin: lab-tester
+name: mesh-probe-add-test-type
+description: Checklist and decision framework for adding a new connectivity test type to mesh-probe (the pattern behind smb, loss, and smtp) — where it must be wired, and the judgment calls that come before the wiring. Read before starting a new test type, not after.
+origin: mesh-probe
 ---
 
-# Lab-Tester: Adding a Test Type
+# Mesh-Probe: Adding a Test Type
 
 Three test types have been added this way (`smb`, `loss`, `smtp`). The
 wiring is mechanical and exhaustive; the design decisions are not. Make the
@@ -39,7 +39,7 @@ meaningful response," while the real data goes in `output`. Never conflate
 "degraded" with "failed": `pmtu` reports a partial breakpoint rather than a
 hard failure, `loss`'s `success` is `true` on any reply at all, and `smtp`'s
 gates on the banner + `EHLO` response only, never `RCPT` — a real relay
-correctly rejecting the probe's `RCPT TO:<probe@lab.invalid>` with `550`
+correctly rejecting the probe's `RCPT TO:<probe@mesh-probe.invalid>` with `550`
 must still read `success:true`. Get this wrong and a perfectly healthy
 target reads as broken.
 
@@ -60,7 +60,7 @@ regressed across versions. A hand-rolled `nc` conversation was correct
 there. Default to checking, not to hand-rolling.
 
 **Server daemon naming.** Always ship an own `lab-<name>` OpenRC init
-script (`lab-httpd`, `lab-smbd`, `lab-smtpd`), never a packaged `*-openrc`
+script (`mesh-probe-httpd`, `mesh-probe-smbd`, `mesh-probe-smtpd`), never a packaged `*-openrc`
 subpackage's default service name. A generic service name (`smtpd`,
 `httpd`) is a collision/bypass risk — an operator could enable it directly,
 skipping the `ENABLE_X` gate and every safety guard in the config this
@@ -163,9 +163,9 @@ list) · `.claude/agents/drift-checker.md` (service-name set) ·
 list, a new numbered check if security review found a structural invariant
 worth guarding permanently) · `.claude/agents/test-result-analyst.md`
 (sample-rate section, coarse-timing note, a trap warning if success
-semantics are non-obvious) · `.claude/agents/lab-tester-diagnostician.md`
+semantics are non-obvious) · `.claude/agents/mesh-probe-diagnostician.md`
 (tests-per-pair list, serves list, port list) · the three
-`.claude/skills/lab-tester-*/SKILL.md` files (config vars/services lists,
+`.claude/skills/mesh-probe-*/SKILL.md` files (config vars/services lists,
 `COARSE_TIMING` enumeration, a troubleshooting subsection if the test has a
 "can pass while degraded" trap).
 

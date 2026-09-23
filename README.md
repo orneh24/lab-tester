@@ -1,4 +1,4 @@
-# Lab Tester
+# Mesh Probe
 
 > **AI disclaimer:** This project was created using [Claude Code](https://claude.com/claude-code).
 
@@ -22,31 +22,31 @@ VM it names, not all at once.
 vCenter into the two VMs below:
 
 ```sh
-wget -O- https://github.com/orneh24/lab-tester/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/lab-tester-main /root/lab-tester
+wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe
 ```
 
 **2. Hub VM** (the clone that becomes the hub — build this first, its IP
 gets baked into the node image):
 
 ```sh
-sh /root/lab-tester/install.sh hub -y   # asks nothing, runs hub/build-template.sh
+sh /root/mesh-probe/install.sh hub -y   # asks nothing, runs hub/build-template.sh
 set-static-ip <hub-ip>/<cidr> <gateway> [dns] [hostname]   # or guestinfo.hub.ip/.gateway pre-boot
 rc-service networking restart
-rc-service lab-tester-hub start
+rc-service mesh-probe-hub start
 ```
 
 **3. Node golden image** (the other clone, kept as a template — not a
 deployed node itself):
 
 ```sh
-sh /root/lab-tester/install.sh node -y   # asks nothing, runs node/build-template.sh
-vi /etc/lab-tester/config   # HUB_URL, GROUP_NAME required; SUBNET auto-derives from DHCP
-/usr/local/bin/lab-tester/setup.sh
+sh /root/mesh-probe/install.sh node -y   # asks nothing, runs node/build-template.sh
+vi /etc/mesh-probe/config   # HUB_URL, GROUP_NAME required; SUBNET auto-derives from DHCP
+/usr/local/bin/mesh-probe/setup.sh
 # verify it registers, THEN undo that (it recreated the config and
 # hostname the build script had just cleared) before sealing the image:
-rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
-      /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
-printf 'lab-tester-template\n' > /etc/hostname
+rm -f /etc/mesh-probe/config /etc/mesh-probe/config.bak-* \
+      /etc/mesh-probe/.firstboot-done /etc/mesh-probe/.setup-done
+printf 'mesh-probe-template\n' > /etc/hostname
 # now shut down, convert to vCenter template
 ```
 
@@ -55,7 +55,7 @@ set a unique hostname, then either let `node-setup.sh` prompt at login, or
 run it (or `register.sh`) by hand:
 
 ```sh
-/usr/local/bin/lab-tester/register.sh
+/usr/local/bin/mesh-probe/register.sh
 ```
 
 `install.sh` (interactive, no `-y`) asks which role a fresh base VM becomes
@@ -72,12 +72,12 @@ at first login.
 
 | Key | Applies to | Example | Notes |
 |---|---|---|---|
-| `guestinfo.lab.hub_url` | node | `http://10.0.0.100` | **required** |
-| `guestinfo.lab.group` | node | `site-a` | **required** — clusters nodes on the dashboard, filters syslog by sender |
-| `guestinfo.lab.subnet` | node | `10.1.1.0/24` | derived from the DHCP lease if omitted |
-| `guestinfo.lab.hostname` | node | `test-node-site-a` | derived as `<prefix>-<group>` if omitted; must be unique lab-wide |
-| `guestinfo.lab.dns_server` | node | `10.0.0.53` | unset skips the DNS test entirely |
-| `guestinfo.lab.dns_query` | node | `example.com` | name to resolve, used only when `dns_server` is set |
+| `guestinfo.meshprobe.hub_url` | node | `http://10.0.0.100` | **required** |
+| `guestinfo.meshprobe.group` | node | `site-a` | **required** — clusters nodes on the dashboard, filters syslog by sender |
+| `guestinfo.meshprobe.subnet` | node | `10.1.1.0/24` | derived from the DHCP lease if omitted |
+| `guestinfo.meshprobe.hostname` | node | `test-node-site-a` | derived as `<prefix>-<group>` if omitted; must be unique lab-wide |
+| `guestinfo.meshprobe.dns_server` | node | `10.0.0.53` | unset skips the DNS test entirely |
+| `guestinfo.meshprobe.dns_query` | node | `example.com` | name to resolve, used only when `dns_server` is set |
 | `guestinfo.hub.ip` | hub | `10.0.0.100/24` | with neither hub key set, `hub-setup.sh` prompts at first login instead |
 | `guestinfo.hub.gateway` | hub | `10.0.0.1` | |
 
@@ -117,7 +117,7 @@ devices logging to the hub at all.
   memory, disk).
 - **Nodes** — Alpine VMs, ~128 MB RAM, one per network segment under test.
   Cloned from a single golden template; drive the tests via cron every 60s
-  and push results to the hub. Configure via `guestinfo.lab.*` (zero-touch)
+  and push results to the hub. Configure via `guestinfo.meshprobe.*` (zero-touch)
   or an interactive prompt at first login (`node-setup.sh`), same pattern as
   the hub's static-IP setup.
 

@@ -1,9 +1,9 @@
 ---
-name: lab-tester-dev-toolkit
-description: How to run, launch, start, demo, or locally test the lab-tester project (hub + nodes) without any VM. Use this whenever asked to "run the app," "start the hub," "spin up a test mesh," "see this change working," "demo the dashboard," or to verify a change to hub/, node/scripts/register.sh, or node/scripts/test-cycle.sh actually works end to end — before reaching for docker, a generic dev server guess, or a real VM. Also covers simulating a broken network path in the demo mesh and where to view results.
+name: mesh-probe-dev-toolkit
+description: How to run, launch, start, demo, or locally test the mesh-probe project (hub + nodes) without any VM. Use this whenever asked to "run the app," "start the hub," "spin up a test mesh," "see this change working," "demo the dashboard," or to verify a change to hub/, node/scripts/register.sh, or node/scripts/test-cycle.sh actually works end to end — before reaching for docker, a generic dev server guess, or a real VM. Also covers simulating a broken network path in the demo mesh and where to view results.
 ---
 
-# lab-tester dev toolkit
+# mesh-probe dev toolkit
 
 This project ships its own local dev/demo toolkit under `dev/` — a real hub
 plus simulated nodes, entirely on the workstation, no vCenter or VM

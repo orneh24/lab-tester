@@ -1,5 +1,5 @@
-# lab-tester node configuration
-# Copy this file to /etc/lab-tester/config and edit as needed.
+# mesh-probe node configuration
+# Copy this file to /etc/mesh-probe/config and edit as needed.
 #
 # In normal use you do not edit this by hand: setup.sh writes the file from
 # VMware guestinfo keys set on the node's VM in vCenter. Precedence for each
@@ -8,12 +8,12 @@
 # it from the interface's own DHCP lease (address + prefix already give you
 # the network), so it's normally left unset entirely.
 #
-#   guestinfo.lab.hub_url    ->  HUB_URL
-#   guestinfo.lab.group      ->  GROUP_NAME
-#   guestinfo.lab.subnet     ->  SUBNET         (optional — see above)
-#   guestinfo.lab.hostname   ->  LAB_HOSTNAME   (optional)
-#   guestinfo.lab.dns_server ->  DNS_SERVER     (optional)
-#   guestinfo.lab.dns_query  ->  DNS_QUERY      (optional)
+#   guestinfo.meshprobe.hub_url    ->  HUB_URL
+#   guestinfo.meshprobe.group      ->  GROUP_NAME
+#   guestinfo.meshprobe.subnet     ->  SUBNET         (optional — see above)
+#   guestinfo.meshprobe.hostname   ->  NODE_HOSTNAME   (optional)
+#   guestinfo.meshprobe.dns_server ->  DNS_SERVER     (optional)
+#   guestinfo.meshprobe.dns_query  ->  DNS_QUERY      (optional)
 
 # URL of the hub (no trailing slash)
 # Example: http://10.0.0.100
@@ -40,7 +40,7 @@ SUBNET=
 # It must be unique across the lab: the hub keys its endpoint table by
 # hostname, so two nodes sharing a name overwrite each other and the mesh
 # collapses to a single entry.
-LAB_HOSTNAME=
+NODE_HOSTNAME=
 
 HOSTNAME_PREFIX=test-node
 
@@ -74,7 +74,7 @@ PMTU_SIZE=1472
 ENABLE_IPERF=false
 
 # Enable the SMB probe test (true/false). Every node runs a Samba server
-# (lab-smbd) exporting one small read-only share, and every peer fetches a
+# (mesh-probe-smbd) exporting one small read-only share, and every peer fetches a
 # fixed probe file from it. SMB is chatty and session-oriented, so it is the
 # test most likely to catch an inspection policy or a NAT/MTU problem that
 # HTTP, SSH and iperf3 miss.
@@ -85,7 +85,7 @@ ENABLE_IPERF=false
 ENABLE_SMB=false
 
 # Enable the SMTP probe test (true/false). Every node runs an OpenSMTPD
-# server (lab-smtpd), and every peer holds a lightweight conversation
+# server (mesh-probe-smtpd), and every peer holds a lightweight conversation
 # against it: banner -> EHLO -> MAIL FROM -> RCPT TO -> RSET -> QUIT. It
 # catches SMTP ALG / ESMTP inspection — common on firewalls and NAT gateways
 # — masking unrecognised capability verbs (e.g. STARTTLS) with runs of X —
@@ -93,7 +93,7 @@ ENABLE_SMB=false
 # here would notice.
 #
 # Safety: the probe never issues DATA — it aborts the transaction with RSET
-# right after the envelope. lab-smtpd's own config has no relay action, so
+# right after the envelope. mesh-probe-smtpd's own config has no relay action, so
 # even a real client that completed DATA against it could not have that
 # message forwarded anywhere. This cannot send mail, including against a
 # real external relay registered as a static target (that arm is
@@ -112,7 +112,7 @@ ENABLE_SMTP=false
 #SMTP_PORT=25
 #SMTP_HELO=
 #SMTP_MAIL_FROM=
-#SMTP_RCPT=probe@lab.invalid
+#SMTP_RCPT=probe@mesh-probe.invalid
 #SMTP_TIMEOUT=10
 
 # Loss/jitter probe (fping) tuning — always on, no ENABLE_* flag. Defaults
@@ -138,8 +138,8 @@ DNS_QUERY=example.com
 # dashboard is still the source of truth; this is for an operator at the
 # node's own VM console, or SSH'd in, who wants to see whether THIS node's
 # tests are passing without opening the dashboard. Same table also lands in
-# /var/log/lab-tester/test-cycle.log and is available on demand via
-# `test-status` (see also /run/lab-tester/last-cycle.txt, and the summary
+# /var/log/mesh-probe/test-cycle.log and is available on demand via
+# `test-status` (see also /run/mesh-probe/last-cycle.txt, and the summary
 # shown at interactive login).
 CONSOLE_OUTPUT=true
 

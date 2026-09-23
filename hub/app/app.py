@@ -1,4 +1,4 @@
-"""Lab-tester hub — collects registrations and test results, serves dashboard."""
+"""Mesh-probe hub — collects registrations and test results, serves dashboard."""
 
 import sqlite3
 import os
@@ -159,7 +159,7 @@ def prune_stale_endpoints(db):
 #
 # A hub-authored syslog row is, honestly, the one row in this table that IS
 # trustworthy — and gains no special protection from that: anything on the
-# segment can send UDP claiming host=lab-tester-hub with the matching
+# segment can send UDP claiming host=mesh-probe-hub with the matching
 # mnemonic, and /api/path-changes would serve it. The tag is a label, not a
 # boundary. Blast radius is bounded (a spurious marker + a syslog link; no
 # result row is ever altered or lost).

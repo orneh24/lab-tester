@@ -8,7 +8,7 @@
 <script>
 // Set before first paint so a saved light choice doesn't flash dark on load.
 try {
-    if (localStorage.getItem('lab-theme') === 'light') {
+    if (localStorage.getItem('mesh-probe-theme') === 'light') {
         document.documentElement.setAttribute('data-theme', 'light');
     }
 } catch (e) {}
@@ -17,7 +17,7 @@ function toggleTheme() {
     var light = root.getAttribute('data-theme') !== 'light';
     if (light) root.setAttribute('data-theme', 'light');
     else root.removeAttribute('data-theme');
-    try { localStorage.setItem('lab-theme', light ? 'light' : 'dark'); } catch (e) {}
+    try { localStorage.setItem('mesh-probe-theme', light ? 'light' : 'dark'); } catch (e) {}
     syncThemeButton();
 }
 function syncThemeButton() {
@@ -1443,7 +1443,7 @@ a:hover { text-decoration: underline; }
 
     // The groups behind a pair, for a sender-filtered link. Best effort by
     // design: syslog identifies a device by the hostname it puts in its own
-    // messages, which is not necessarily guestinfo.lab.group. An unmatched
+    // messages, which is not necessarily guestinfo.meshprobe.group. An unmatched
     // name yields an empty view rather than a wrong one, and the unfiltered
     // window link beside it always works.
     function pairGroups(src, dst) {

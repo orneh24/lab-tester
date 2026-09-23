@@ -1,4 +1,4 @@
-# Lab-Tester — Deployment Checklist
+# Mesh-Probe — Deployment Checklist
 
 Order of operations for building the lab from nothing. Step detail lives in
 `BUILD_GUIDE.md`; this file is the sequence and the dependencies between stages.
@@ -32,8 +32,8 @@ setup-alpine
 ```
 
 Then, once: `wget -O-
-https://github.com/orneh24/lab-tester/archive/refs/heads/main.tar.gz | tar
--xz -C /root && mv /root/lab-tester-main /root/lab-tester` — BusyBox `wget`
+https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar
+-xz -C /root && mv /root/mesh-probe-main /root/mesh-probe` — BusyBox `wget`
 and `tar` are already on the base image, so nothing is installed (dropbear
 alone can't receive scp/sftp — see stage 1's note if GitHub isn't reachable
 from the VM). Then snapshot/clone it twice: one clone becomes the hub, one
@@ -43,25 +43,25 @@ becomes the node golden image — both already have the files.
 hub clone):
 
 ```sh
-sh /root/lab-tester/install.sh hub -y   # asks nothing; or: sh hub/build-template.sh
+sh /root/mesh-probe/install.sh hub -y   # asks nothing; or: sh hub/build-template.sh
 set-static-ip <hub-ip>/<cidr> <gateway> [dns] [hostname]
 rc-service networking restart
-rc-service lab-tester-hub start
+rc-service mesh-probe-hub start
 # confirm: http://<hub-ip>/ loads
 ```
 
 **3. Node golden image** (on the other clone):
 
 ```sh
-sh /root/lab-tester/install.sh node -y   # asks nothing; or: sh node/build-template.sh
-vi /etc/lab-tester/config        # set HUB_URL, GROUP_NAME (SUBNET auto-derives from DHCP)
-/usr/local/bin/lab-tester/setup.sh
+sh /root/mesh-probe/install.sh node -y   # asks nothing; or: sh node/build-template.sh
+vi /etc/mesh-probe/config        # set HUB_URL, GROUP_NAME (SUBNET auto-derives from DHCP)
+/usr/local/bin/mesh-probe/setup.sh
 # confirm it registers against the live hub, THEN undo what that just
 # did before sealing it (see stage 3 below) — verifying re-creates the
 # config and hostname the build script had just cleared:
-rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* \
-      /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done
-printf 'lab-tester-template\n' > /etc/hostname
+rm -f /etc/mesh-probe/config /etc/mesh-probe/config.bak-* \
+      /etc/mesh-probe/.firstboot-done /etc/mesh-probe/.setup-done
+printf 'mesh-probe-template\n' > /etc/hostname
 # now shut down and convert to a vCenter template
 ```
 
@@ -69,7 +69,7 @@ printf 'lab-tester-template\n' > /etc/hostname
 unique hostname, then:
 
 ```sh
-/usr/local/bin/lab-tester/register.sh
+/usr/local/bin/mesh-probe/register.sh
 # confirm it appears in http://<hub-ip>/endpoints
 ```
 
@@ -96,7 +96,7 @@ Everything downstream bakes these in. Settle them before touching a VM.
 - [ ] One VM from the alpine-virt ISO (BUILD_GUIDE 2–3)
 - [ ] `setup-alpine`, community repository enabled, core packages installed (4.1–4.2)
 - [ ] Get the project files onto the VM **once, before cloning**:
-      `wget -O- https://github.com/orneh24/lab-tester/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/lab-tester-main /root/lab-tester`.
+      `wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe`.
       Uses only BusyBox `wget`/`tar` and `ssl_client`, all on the base
       image, so nothing is installed and it works even before community is
       enabled. Both `hub/` and `node/` come along in the one download, so
@@ -128,35 +128,35 @@ system wipes it.
 needs its final address first.**
 
 `hub/build-template.sh` is the deploy. It installs the packages, populates
-`/opt/lab-tester-hub/`, writes `hub.env` and `/etc/init.d/lab-tester-hub`,
+`/opt/mesh-probe-hub/`, writes `hub.env` and `/etc/init.d/mesh-probe-hub`,
 installs `set-static-ip`, and enables the hub, chronyd, open-vm-tools and
 dropbear. Do not hand-build any of that — BUILD_GUIDE's Appendix B predates
 the script and contradicts it (its init script runs `run.sh`; the real one
 runs `python3 serve.py`). It's kept only as reference for what the script
 does, not as build steps to follow.
 
-- [ ] Run `sh /root/lab-tester/install.sh hub` (asks to confirm, then runs
+- [ ] Run `sh /root/mesh-probe/install.sh hub` (asks to confirm, then runs
       `hub/build-template.sh`) or that script directly — already on the VM
       if you downloaded it in stage 1; otherwise SCP `hub/` over first — see stage
       1's note
 - [ ] Set the static IP, either way:
       - **Guestinfo (zero-touch):** set `guestinfo.hub.ip` and
-        `guestinfo.hub.gateway` on the VM before boot; `lab-tester-hub-firstboot`
+        `guestinfo.hub.gateway` on the VM before boot; `mesh-probe-hub-firstboot`
         applies them automatically, no console session needed.
       - **Manual:** log in — `hub-setup.sh` runs automatically at first login
         and prompts for both values, or run `set-static-ip <ip/cidr> <gateway>`
         yourself. **One interface, no NIC argument** — the helper writes the
         whole of `/etc/network/interfaces`.
 - [ ] `rc-service networking restart` (skip if `hub-setup.sh` already did it)
-- [ ] `/opt/lab-tester-hub/hub.env` if the defaults do not suit. The file is
+- [ ] `/opt/mesh-probe-hub/hub.env` if the defaults do not suit. The file is
       written by `build-template.sh` and every key is commented in place with
       what it does; `hub/app/config.py` is where they are read
-- [ ] `rc-service lab-tester-hub start` — `rc-update` already ran in the script
+- [ ] `rc-service mesh-probe-hub start` — `rc-update` already ran in the script
 
 Verify before moving on:
 
 - [ ] Dashboard loads on `http://<hub-ip>/`
-- [ ] `grep syslog /var/log/lab-tester-hub.log` shows the listener bound
+- [ ] `grep syslog /var/log/mesh-probe-hub.log` shows the listener bound
 - [ ] `curl http://<hub-ip>/api/syslog?minutes=5` returns JSON
 - [ ] `curl http://<hub-ip>/api/health` returns 200
 - [ ] `curl http://<hub-ip>/api/time` returns 200, and the `/syslog` header
@@ -199,7 +199,7 @@ Verify before moving on:
 
 ## 3. Node golden image
 
-- [ ] Run `sh /root/lab-tester/install.sh node` (asks to confirm, then runs
+- [ ] Run `sh /root/mesh-probe/install.sh node` (asks to confirm, then runs
       `node/build-template.sh`) or that script directly — already on the VM
       if you downloaded it in stage 1; otherwise SCP `node/` over first — see stage
       1's note
@@ -208,7 +208,7 @@ Verify before moving on:
       [Y/n]`. Answer yes and it delegates straight to `setup.sh` below;
       answer no and either let it ask again next login, or use the manual
       path in the next checkbox
-- [ ] `/etc/lab-tester/config`: set `HUB_URL` and `GROUP_NAME`. `SUBNET` can
+- [ ] `/etc/mesh-probe/config`: set `HUB_URL` and `GROUP_NAME`. `SUBNET` can
       be left blank — `setup.sh` derives it from the interface's DHCP lease,
       falling back to a prompt only if that also fails. `register.sh` still
       validates all three are non-empty in the config file at cron time and
@@ -219,18 +219,18 @@ Verify before moving on:
       Alpine's default NTP pool, and nothing points them at the hub
 - [ ] Verify dropbear, httpd, iperf3, crond, lldpd and open-vm-tools are
       running; identity page renders. If `ENABLE_SMB=true`, verify
-      `lab-smbd` is running too —
+      `mesh-probe-smbd` is running too —
       it is not started by default (lldpd, unlike smb, always is). Same for
-      `lab-smtpd` under `ENABLE_SMTP`, plus `grep -n relay /etc/smtpd/smtpd.conf`
+      `mesh-probe-smtpd` under `ENABLE_SMTP`, plus `grep -n relay /etc/smtpd/smtpd.conf`
       returning nothing but comments before trusting it with a real network path
 - [ ] Confirm registration works against the live hub before sealing the image
 - [ ] **Redo the config/hostname cleanup** — `node/build-template.sh` already
-      cleared `/etc/lab-tester/config`, the login-prompt stamp, and reset the
-      hostname to `lab-tester-template` as its last step, but the
+      cleared `/etc/mesh-probe/config`, the login-prompt stamp, and reset the
+      hostname to `mesh-probe-template` as its last step, but the
       login-prompt-and-`setup.sh` verification above just undid all of it.
       Repeat that part by hand:
-      `rm -f /etc/lab-tester/config /etc/lab-tester/config.bak-* /etc/lab-tester/.firstboot-done /etc/lab-tester/.setup-done`
-      and `printf 'lab-tester-template\n' > /etc/hostname`. Skip this and
+      `rm -f /etc/mesh-probe/config /etc/mesh-probe/config.bak-* /etc/mesh-probe/.firstboot-done /etc/mesh-probe/.setup-done`
+      and `printf 'mesh-probe-template\n' > /etc/hostname`. Skip this and
       every clone starts with this run's real `GROUP_NAME`/`SUBNET` and
       hostname baked in — the hostname collision stage 4 warns about, from
       clone one — **and** with `.setup-done` present, so `node-setup.sh`
@@ -238,7 +238,7 @@ Verify before moving on:
       The rest of the script's cleanup (machine-id, dropbear host keys,
       logs, zero free space) doesn't need repeating — nothing after it
       touched those
-- [ ] `rm -rf /root/lab-tester` if you downloaded the repo (stage 1) to get
+- [ ] `rm -rf /root/mesh-probe` if you downloaded the repo (stage 1) to get
       the files onto the VM
 - [ ] Shut down, convert to template in vCenter
 
@@ -293,7 +293,7 @@ hub, which is not an NTP server (see stage 2).
 - The per-group syslog links beside the drill-down filter on the *syslog*
   hostname — whatever the device puts in its own messages. If one comes back
   empty while the unfiltered window has the message, that device logs under
-  a different name than `guestinfo.lab.group`.
+  a different name than `guestinfo.meshprobe.group`.
 - The matrix has only pass / fail / no-data, no amber — a stopped node's
   cells go grey. The amber "stale" marker lives in the separate
   **Endpoints** list instead, and appears once that node's `last_seen`
@@ -314,5 +314,5 @@ hub, which is not an NTP server (see stage 2).
 
 - An amber row in the **Endpoints** list means a node stopped registering
   (`last_seen` over 5 minutes). Its matrix cells go grey rather than amber.
-  Either way, start at that node's logs in `/var/log/lab-tester/`, not at the
+  Either way, start at that node's logs in `/var/log/mesh-probe/`, not at the
   network.

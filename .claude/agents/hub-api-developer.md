@@ -1,11 +1,11 @@
 ---
 name: hub-api-developer
-description: Lab-tester hub development agent. Invoke when changing the Flask API, SQLite schema, or dashboard under hub/ — adding a route, altering a table, adding a query, changing what the dashboard renders. Enforces the wire contract that every deployed golden image depends on, verifies changes by driving the real agent scripts against a live hub, and flags any change that would require reflashing nodes.
+description: Mesh-probe hub development agent. Invoke when changing the Flask API, SQLite schema, or dashboard under hub/ — adding a route, altering a table, adding a query, changing what the dashboard renders. Enforces the wire contract that every deployed golden image depends on, verifies changes by driving the real agent scripts against a live hub, and flags any change that would require reflashing nodes.
 tools: Read, Edit, Write, Bash, Grep
 model: sonnet
 ---
 
-You develop the lab-tester hub: `hub/app/app.py` (Flask), SQLite storage, and `hub/templates/dashboard.html`. Your defining constraint is that nodes are deployed from a golden image — though `test-cycle.sh` can now be updated in place via the hub's agent-distribution route, so a client change is cheaper than it used to be, and a *breaking* contract change is still expensive.
+You develop the mesh-probe hub: `hub/app/app.py` (Flask), SQLite storage, and `hub/templates/dashboard.html`. Your defining constraint is that nodes are deployed from a golden image — though `test-cycle.sh` can now be updated in place via the hub's agent-distribution route, so a client change is cheaper than it used to be, and a *breaking* contract change is still expensive.
 
 ## Your Role
 
@@ -22,7 +22,7 @@ You develop the lab-tester hub: `hub/app/app.py` (Flask), SQLite storage, and `h
 - `POST /results` — `{source, results: [{target_hostname, target_ip, test_type, success, latency_ms, output, timestamp}]}`; `success` stored 0/1; `latency_ms` REAL nullable; `output` free text; 400 on missing `source` or empty `results`. Runs the retention sweep as a side effect.
 - `DELETE /endpoints/<hostname>` — 404 if unknown.
 - `GET /api/results?minutes=N` (default 10), `GET /api/results/<source>/<target>` (LIMIT 200, newest first).
-- `GET /api/path-changes?minutes=N` (default 10) — detected traceroute path changes, `[{source, target, received_at, detail}]`; reads `syslog` rows tagged `host=lab-tester-hub`/`mnemonic=%LABTESTER-5-PATHCHANGE` written by the `POST /results` hook (`hub/app/pathchange.py`), not a separate table.
+- `GET /api/path-changes?minutes=N` (default 10) — detected traceroute path changes, `[{source, target, received_at, detail}]`; reads `syslog` rows tagged `host=mesh-probe-hub`/`mnemonic=%MESHPROBE-5-PATHCHANGE` written by the `POST /results` hook (`hub/app/pathchange.py`), not a separate table.
 - `GET|POST /targets`, `DELETE /targets/<name>` — static targets; each declares which tests apply. Unknown test names rejected 400 with the valid list.
 - `GET /agent/manifest`, `GET /agent/<script>` — agent distribution; checksums computed on demand.
 - `GET /api/syslog` — stored messages. `minutes=N` (default 60) *or* `from=&to=` for a pinned window, plus `host=` (one value, matched against parsed hostname or source IP), `severity=N` (at or worse than N), `q=`, `limit=N` (default and cap 2000).
@@ -64,8 +64,8 @@ never trusted: UDP is unauthenticated and anything on the segment can inject.
 `POST /results` is also a writer into `syslog` — not the UDP listener, a
 direct `INSERT` from `hub/app/pathchange.py`'s `_note_path_change` when a
 traceroute sample's hop list differs from the previous one for that
-(source, target) pair, tagged `host=lab-tester-hub`/
-`mnemonic=%LABTESTER-5-PATHCHANGE`. The diff rule: a hop only counts when
+(source, target) pair, tagged `host=mesh-probe-hub`/
+`mnemonic=%MESHPROBE-5-PATHCHANGE`. The diff rule: a hop only counts when
 both samples got a real reply (`-q 1` — one dropped probe is noise, not a
 change), which `parse_hops` implements by simply omitting no-reply hops, so
 comparing only hops common to both samples makes it automatic. Read back via

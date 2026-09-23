@@ -1,8 +1,8 @@
 #!/sbin/openrc-run
-# OpenRC init script for the lab-tester SMTP probe server (OpenSMTPD smtpd).
+# OpenRC init script for the mesh-probe SMTP probe server (OpenSMTPD smtpd).
 #
-# Named lab-smtpd, not smtpd, for the same reason lab-smbd isn't named smbd
-# (which itself follows lab-httpd's precedent): Alpine's opensmtpd-openrc
+# Named mesh-probe-smtpd, not smtpd, for the same reason mesh-probe-smbd isn't named smbd
+# (which itself follows mesh-probe-httpd's precedent): Alpine's opensmtpd-openrc
 # subpackage installs its own init script at the bare name /etc/init.d/smtpd
 # (verified against the installed package). That would let an operator
 # `rc-update add smtpd` by accident, bypassing ENABLE_SMTP and every safety
@@ -11,21 +11,21 @@
 # only init script for OpenSMTPD on this image. Only enabled by setup.sh
 # when ENABLE_SMTP=true; not added to any runlevel at image build time.
 #
-# One divergence from lab-smbd worth flagging: smbd writes its own pidfile
-# at a location smb.conf controls ("pid directory"), so lab-smbd's pidfile=
+# One divergence from mesh-probe-smbd worth flagging: smbd writes its own pidfile
+# at a location smb.conf controls ("pid directory"), so mesh-probe-smbd's pidfile=
 # has to agree with that setting. OpenSMTPD's parent process also calls the
 # libc pidfile() helper unconditionally (even under -d), but it always
 # writes /run/smtpd.pid — the binary's own name, not this service's name —
-# so that path can never agree with lab-smtpd's pidfile= no matter what we
+# so that path can never agree with mesh-probe-smtpd's pidfile= no matter what we
 # set. That stray /run/smtpd.pid is harmless and unused: command_background
-# below makes OpenRC's start-stop-daemon create and own /run/lab-smtpd.pid
+# below makes OpenRC's start-stop-daemon create and own /run/mesh-probe-smtpd.pid
 # itself (--make-pidfile, forced by command_background=yes), the same way it
-# does for lab-httpd, which also writes no pidfile of its own. Don't copy
+# does for mesh-probe-httpd, which also writes no pidfile of its own. Don't copy
 # smb.conf's "pid directory" coupling into smtpd.conf; there is no matching
 # directive and it would only confuse a future reader.
 
-name="lab-smtpd"
-description="lab-tester SMTP probe server (OpenSMTPD smtpd)"
+name="mesh-probe-smtpd"
+description="mesh-probe SMTP probe server (OpenSMTPD smtpd)"
 
 command="/usr/sbin/smtpd"
 # -d: do not daemonize (foreground; command_background handles backgrounding
@@ -34,9 +34,9 @@ command="/usr/sbin/smtpd"
 # error_log below capture that stderr.
 command_args="-d -f /etc/smtpd/smtpd.conf"
 command_background="yes"
-pidfile="/run/lab-smtpd.pid"
-output_log="/var/log/lab-tester/smtpd.log"
-error_log="/var/log/lab-tester/smtpd.log"
+pidfile="/run/mesh-probe-smtpd.pid"
+output_log="/var/log/mesh-probe/smtpd.log"
+error_log="/var/log/mesh-probe/smtpd.log"
 
 depend() {
     need net
@@ -48,7 +48,7 @@ start_pre() {
     # misleading "started" for a daemon that immediately died. -n is
     # smtpd's own config-check mode (no side effects, no listeners opened).
     if ! /usr/sbin/smtpd -n -f /etc/smtpd/smtpd.conf >/dev/null 2>&1; then
-        eerror "lab-smtpd: /etc/smtpd/smtpd.conf failed to parse, refusing to start"
+        eerror "mesh-probe-smtpd: /etc/smtpd/smtpd.conf failed to parse, refusing to start"
         return 1
     fi
 }

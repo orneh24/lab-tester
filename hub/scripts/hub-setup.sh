@@ -1,5 +1,5 @@
 #!/bin/sh
-# hub-setup.sh — interactive first-time configuration for the lab-tester hub.
+# hub-setup.sh — interactive first-time configuration for the mesh-probe hub.
 #
 # Run automatically at first interactive login (see services/login-setup.sh)
 # when the hub hasn't been configured yet, or by hand at any time. Safe to
@@ -11,7 +11,7 @@
 
 set -eu
 
-CONF_DIR="/etc/lab-tester-hub"
+CONF_DIR="/etc/mesh-probe-hub"
 STAMP="${CONF_DIR}/.setup-done"
 
 mkdir -p "$CONF_DIR"
@@ -22,7 +22,7 @@ if [ -f "$STAMP" ] && [ "${1:-}" != "--force" ]; then
     exit 0
 fi
 
-echo "=== lab-tester hub setup ==="
+echo "=== mesh-probe hub setup ==="
 echo
 
 CURRENT_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | head -1)
@@ -87,5 +87,5 @@ date -u '+%Y-%m-%dT%H:%M:%SZ configured' > "$STAMP"
 
 echo
 echo "Static IP set. Dashboard: http://${IP_CIDR%/*}/"
-echo "Edit /opt/lab-tester-hub/hub.env if the defaults don't suit, then:"
-echo "  rc-service lab-tester-hub restart"
+echo "Edit /opt/mesh-probe-hub/hub.env if the defaults don't suit, then:"
+echo "  rc-service mesh-probe-hub restart"

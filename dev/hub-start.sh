@@ -1,5 +1,5 @@
 #!/bin/sh
-# dev/hub-start.sh — start a local lab-tester hub for dev/demo use.
+# dev/hub-start.sh — start a local mesh-probe hub for dev/demo use.
 # See dev/README.md.
 set -eu
 

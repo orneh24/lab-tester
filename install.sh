@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh — entry point for a freshly downloaded lab-tester repo on a
+# install.sh — entry point for a freshly downloaded mesh-probe repo on a
 # fresh Alpine base VM. Asks whether this VM becomes a Hub or a Node, then
 # either runs or names the matching build-template.sh.
 #
@@ -10,7 +10,7 @@
 #
 # Deliberately refuses to run on a VM that's already been built into a role
 # (see the guard below) — both build-template.sh scripts are destructive if
-# re-run on a configured system: they wipe /etc/lab-tester/config and the
+# re-run on a configured system: they wipe /etc/mesh-probe/config and the
 # hostname, or the hub's results database, as their last step. Their only
 # existing protection against that is self-deleting after a successful run,
 # and that protection disappears the moment the repo is re-downloaded.
@@ -33,11 +33,11 @@ die() {
 # -------------------------------------------------------------------
 # Refuse on an already-built VM
 # -------------------------------------------------------------------
-if [ -f /usr/local/bin/lab-tester/setup.sh ]; then
-    die "This VM is already a configured node (/usr/local/bin/lab-tester/setup.sh exists). Re-running build-template.sh here would wipe its config and hostname. Start from a fresh Alpine install instead."
+if [ -f /usr/local/bin/mesh-probe/setup.sh ]; then
+    die "This VM is already a configured node (/usr/local/bin/mesh-probe/setup.sh exists). Re-running build-template.sh here would wipe its config and hostname. Start from a fresh Alpine install instead."
 fi
-if [ -d /opt/lab-tester-hub ]; then
-    die "This VM is already a hub (/opt/lab-tester-hub exists). Re-running build-template.sh here would wipe the results database. Start from a fresh Alpine install instead."
+if [ -d /opt/mesh-probe-hub ]; then
+    die "This VM is already a hub (/opt/mesh-probe-hub exists). Re-running build-template.sh here would wipe the results database. Start from a fresh Alpine install instead."
 fi
 
 # -------------------------------------------------------------------
@@ -46,7 +46,7 @@ fi
 ROLE="${1:-}"
 
 if [ -z "$ROLE" ]; then
-    echo "=== lab-tester install ==="
+    echo "=== mesh-probe install ==="
     echo
     echo "This VM will become a:"
     echo "  1) Hub  -- infrastructure only, one per lab"
