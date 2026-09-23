@@ -44,6 +44,22 @@ and intent only.
 
 ## Recent changes
 
+**Filters on the dashboard's Recent Syslog panel (2026-09-23).** The panel
+gets the `/syslog` page's Source, Severity ≤, Window (default 24 hours) and
+Search filters, still capped at 10 rows, replacing the fixed
+`/api/syslog?minutes=1440&limit=10` fetch described in the 2026-09-20 entry
+below. "View all" carries source, severity and search across to `/syslog`
+(which takes no window parameter). A stale-response guard
+(`applyRecentSyslog`) keeps an overlapping 30s refresh or an earlier filter
+change from overwriting the rows for the current filters. Also: the
+dashboard's header now matches `/syslog`'s exactly, and a small "Is it
+DNS..?" link to isitdns.com sits at the bottom of the main column. Recent
+Changes rows are zebra-striped by time group: the shade flips only when the
+shown time ("2m ago") changes, so a cycle's changes read as one block.
+Recent Changes and Recent Syslog each get a Collapse/Expand button, remembered
+per browser (localStorage `mesh-probe-collapsed`). The `/syslog` heading is
+now uppercase to match the dashboard's.
+
 **Light/Dark theme on the dashboard and syslog page (2026-09-23).** A
 Light/Dark button at the right end of each page's header. Dark stays the
 default; the choice is remembered per browser under one shared localStorage

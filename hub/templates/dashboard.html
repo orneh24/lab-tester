@@ -33,6 +33,7 @@ function syncThemeButton() {
     --bg-hover:  #1c2128;
     --bg-muted:  #21262d;
     --bg-code:   #010409;
+    --stripe:    #0e1217;
     --border:    #30363d;
     --border-soft: #21262d;
     --badge-bg:  #1a2332;
@@ -55,6 +56,7 @@ function syncThemeButton() {
     --bg-hover:  #d3d9e0;
     --bg-muted:  #d3d9e0;
     --bg-code:   #dde2e8;
+    --stripe:    #dde2e8;
     --border:    #b6bfca;
     --border-soft: #d3d9e0;
     --badge-bg:  #ddf4ff;
@@ -150,6 +152,8 @@ a:hover { text-decoration: underline; }
     padding: 12px 16px;
     overflow: auto;
 }
+.section.collapsed .section-body { display: none; }
+.section.collapsed .section-header { border-bottom: none; }
 
 /* Main column: mesh matrix, static targets, DNS.
    Sections size to their content rather than one panel stretching to fill
@@ -165,16 +169,17 @@ a:hover { text-decoration: underline; }
 }
 .main-col > .section { flex: 0 0 auto; }
 .page-footer { flex: 0 0 auto; text-align: center; padding: 4px 0 8px; }
-.btn-small {
-    display: inline-block;
-    font-size: 10px;
-    padding: 2px 8px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    color: var(--text-dim);
-    background: var(--bg-card);
+.filter-row {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin-bottom: 8px; font-size: 11px;
 }
-.btn-small:hover { color: var(--cyan); border-color: var(--cyan); text-decoration: none; }
+.filter-row label { color: var(--text-dim); }
+.filter-row select, .filter-row input {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 3px; padding: 2px 4px; font: inherit; font-size: 11px;
+}
+.filter-row input[type=text] { min-width: 180px; }
+.page-footer .btn-small { display: inline-block; }
 .scroll-x { overflow-x: auto; }
 
 .health-ok   { color: var(--green); }
@@ -396,6 +401,7 @@ a:hover { text-decoration: underline; }
     border-bottom: 1px solid var(--border-soft);
     white-space: nowrap;
 }
+.ep-table tr.stripe td { background: var(--stripe); }
 .ep-table tr:hover td { background: var(--bg-hover); }
 .ep-table .stale td { color: var(--yellow); }
 .ep-table td.wrap { white-space: normal; word-break: break-word; }
@@ -637,7 +643,10 @@ a:hover { text-decoration: underline; }
              not raw results — a steady-state failure that hasn't changed
              produces nothing here on purpose. -->
         <div class="section" id="changes-section">
-            <div class="section-header"><span>Recent Changes</span></div>
+            <div class="section-header">
+                <span>Recent Changes</span>
+                <span class="hdr-actions"><button type="button" class="btn-small collapse-toggle" data-section="changes-section">Collapse</button></span>
+            </div>
             <div class="section-body">
                 <table class="ep-table" id="changes-table">
                     <thead><tr><th>Time</th><th>Pair</th><th>Change</th></tr></thead>
@@ -648,14 +657,39 @@ a:hover { text-decoration: underline; }
         </div>
 
         <!-- Compressed syslog feed — the last few messages, so a device event
-             is visible without leaving the dashboard. Full filtering/search
-             stays on /syslog; this is a preview, not a replacement. -->
+             is visible without leaving the dashboard. Same filters as /syslog;
+             still capped at 10 rows, so "View all" is where to read more. -->
         <div class="section" id="syslog-preview-section">
             <div class="section-header">
                 <span>Recent Syslog</span>
-                <span class="hdr-actions"><a href="/syslog" class="btn-small">View all &rarr;</a></span>
+                <span class="hdr-actions">
+                    <a href="/syslog" id="sp-viewall" class="btn-small">View all &rarr;</a>
+                    <button type="button" class="btn-small collapse-toggle" data-section="syslog-preview-section">Collapse</button>
+                </span>
             </div>
             <div class="section-body">
+                <div class="filter-row">
+                    <label for="sp-source">Source</label>
+                    <select id="sp-source"><option value="">all</option></select>
+                    <label for="sp-sev">Severity &le;</label>
+                    <select id="sp-sev">
+                        <option value="all">all</option>
+                        <option value="3">3 err</option>
+                        <option value="4">4 warning</option>
+                        <option value="5">5 notice</option>
+                        <option value="6">6 info</option>
+                    </select>
+                    <label for="sp-window">Window</label>
+                    <select id="sp-window">
+                        <option value="15">15 min</option>
+                        <option value="60">1 hour</option>
+                        <option value="360">6 hours</option>
+                        <option value="1440" selected>24 hours</option>
+                        <option value="525600">everything</option>
+                    </select>
+                    <label for="sp-q">Search</label>
+                    <input type="text" id="sp-q" placeholder="text, mnemonic, interface…">
+                </div>
                 <table class="ep-table" id="syslog-preview-table">
                     <thead><tr><th>Time</th><th>Source</th><th>Sev</th><th>Message</th></tr></thead>
                     <tbody></tbody>
@@ -820,6 +854,7 @@ a:hover { text-decoration: underline; }
     }
 
     function refresh() {
+        var syslogQuery = syslogPreviewQuery();
         Promise.all([
             fetchJSON("/endpoints"),
             fetchJSON("/api/results?minutes=10"),
@@ -834,7 +869,7 @@ a:hover { text-decoration: underline; }
             // fewer than 15 rather than reaching further back to pad the count.
             fetchJSON("/api/results?minutes=60"),
             fetchJSON("/api/path-changes?minutes=60"),
-            fetchJSON("/api/syslog?minutes=1440&limit=10")
+            fetchJSON("/api/syslog?" + syslogQuery)
         ]).then(function(arr) {
             endpoints = arr[0];
             resultsData = arr[1];
@@ -842,7 +877,6 @@ a:hover { text-decoration: underline; }
             pathChanges = arr[3];
             changeHistoryResults = arr[4];
             changeHistoryPathChanges = arr[5];
-            recentSyslog = arr[6];
             pathChangeLookup = pathChangeMap();
             renderLegend();
             renderMatrix();
@@ -851,7 +885,7 @@ a:hover { text-decoration: underline; }
             renderEndpoints();
             renderHealth();
             renderRecentChanges();
-            renderRecentSyslog();
+            applyRecentSyslog(syslogQuery, arr[6]);
             if (selectedPair) loadDetail(selectedPair.source, selectedPair.target);
             document.getElementById("last-update").textContent = "Updated: " + new Date().toLocaleTimeString();
             document.getElementById("ep-count").textContent = endpoints.length + " endpoint" + (endpoints.length !== 1 ? "s" : "");
@@ -1157,10 +1191,16 @@ a:hover { text-decoration: underline; }
         var changes = computeRecentChanges(changeHistoryResults, changeHistoryPathChanges);
         var tbody = document.querySelector("#changes-table tbody");
         var html = "";
+        // Zebra stripes by time group: the shade flips only when the shown
+        // time changes, so rows from the same moment read as one block.
+        var stripe = false, lastWhen = null;
         for (var i = 0; i < changes.length; i++) {
             var c = changes[i];
-            html += "<tr class='clickable' data-src='" + esc(c.source) + "' data-dst='" + esc(c.target) + "'>";
-            html += "<td title='" + esc(c.received_at) + "'>" + esc(formatWhen(c.received_at)) + "</td>";
+            var when = formatWhen(c.received_at);
+            if (lastWhen !== null && when !== lastWhen) stripe = !stripe;
+            lastWhen = when;
+            html += "<tr class='clickable" + (stripe ? " stripe" : "") + "' data-src='" + esc(c.source) + "' data-dst='" + esc(c.target) + "'>";
+            html += "<td title='" + esc(c.received_at) + "'>" + esc(when) + "</td>";
             html += "<td>" + esc(c.source) + " &rarr; " + esc(c.target) + "</td>";
             html += "<td class='wrap'>" + changeText(c) + "</td>";
             html += "</tr>";
@@ -1177,9 +1217,76 @@ a:hover { text-decoration: underline; }
     }
 
     // ---------------------------------------------------------------
-    // Recent Syslog — a compressed preview of /syslog, same data, no
-    // filters. "View all" links to the full page for anything more.
+    // Recent Syslog — a compressed preview of /syslog with the same
+    // filters, capped at 10 rows. "View all" carries source, severity and
+    // search across (/syslog has no URL parameter for the window).
     // ---------------------------------------------------------------
+    function syslogPreviewFilters() {
+        return {
+            host: document.getElementById("sp-source").value,
+            severity: document.getElementById("sp-sev").value,
+            minutes: document.getElementById("sp-window").value,
+            q: document.getElementById("sp-q").value.trim()
+        };
+    }
+
+    function syslogPreviewQuery() {
+        var f = syslogPreviewFilters();
+        var qs = new URLSearchParams();
+        qs.set("minutes", f.minutes);
+        qs.set("limit", "10");
+        if (f.host) qs.set("host", f.host);
+        if (f.severity !== "all") qs.set("severity", f.severity);
+        if (f.q) qs.set("q", f.q);
+        return qs.toString();
+    }
+
+    function updateSyslogViewAll() {
+        var f = syslogPreviewFilters();
+        var qs = new URLSearchParams();
+        if (f.host) qs.set("host", f.host);
+        if (f.severity !== "all") qs.set("severity", f.severity);
+        if (f.q) qs.set("q", f.q);
+        var s = qs.toString();
+        document.getElementById("sp-viewall").href = "/syslog" + (s ? "?" + s : "");
+    }
+
+    // Filter changes and the 30s refresh can overlap; only the response for
+    // the filters currently selected is allowed to render.
+    function applyRecentSyslog(query, rows) {
+        if (query !== syslogPreviewQuery()) return;
+        recentSyslog = rows;
+        renderRecentSyslog();
+    }
+
+    function loadRecentSyslog() {
+        updateSyslogViewAll();
+        var query = syslogPreviewQuery();
+        fetchJSON("/api/syslog?" + query).then(function(rows) {
+            applyRecentSyslog(query, rows);
+        });
+    }
+
+    // Rebuilt on each call so a device that starts logging appears without a
+    // page reload; the current choice is kept even if it has no rows yet.
+    function loadSyslogSources() {
+        fetchJSON("/api/syslog/sources").then(function(rows) {
+            var sel = document.getElementById("sp-source");
+            var want = sel.value;
+            var html = "<option value=''>all</option>";
+            for (var i = 0; i < rows.length; i++) {
+                html += "<option value='" + esc(rows[i].name) + "'>" +
+                        esc(rows[i].name) + " (" + rows[i].count + ")</option>";
+            }
+            if (want && rows.every(function(r) { return r.name !== want; })) {
+                html += "<option value='" + esc(want) + "'>" + esc(want) + " (none yet)</option>";
+            }
+            sel.innerHTML = html;
+            sel.value = want;
+        });
+    }
+
+
     function sevColor(sev) {
         if (sev === null || sev === undefined) return "var(--text-dim)";
         if (sev <= 3) return "var(--red)";
@@ -1201,7 +1308,11 @@ a:hover { text-decoration: underline; }
             html += "</tr>";
         }
         tbody.innerHTML = html;
-        document.getElementById("syslog-preview-empty").style.display = recentSyslog.length ? "none" : "";
+        var f = syslogPreviewFilters();
+        var filtered = f.host || f.severity !== "all" || f.q || f.minutes !== "1440";
+        var empty = document.getElementById("syslog-preview-empty");
+        empty.textContent = filtered ? "No syslog messages match these filters." : "No syslog messages.";
+        empty.style.display = recentSyslog.length ? "none" : "";
     }
 
     function renderMatrix() {
@@ -1712,8 +1823,42 @@ a:hover { text-decoration: underline; }
     // ---------------------------------------------------------------
     // Init
     // ---------------------------------------------------------------
+    // Collapse/Expand for panels that carry a .collapse-toggle button.
+    // Remembered per browser; storage can be unavailable, so it's optional.
+    var COLLAPSE_KEY = "mesh-probe-collapsed";
+    function readCollapsed() {
+        try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || []; } catch (e) { return []; }
+    }
+    function setCollapsed(btn, collapsed) {
+        document.getElementById(btn.getAttribute("data-section")).classList.toggle("collapsed", collapsed);
+        btn.textContent = collapsed ? "Expand" : "Collapse";
+    }
+    var collapsedIds = readCollapsed();
+    document.querySelectorAll(".collapse-toggle").forEach(function(btn) {
+        setCollapsed(btn, collapsedIds.indexOf(btn.getAttribute("data-section")) !== -1);
+        btn.addEventListener("click", function() {
+            var id = btn.getAttribute("data-section");
+            var nowCollapsed = !document.getElementById(id).classList.contains("collapsed");
+            setCollapsed(btn, nowCollapsed);
+            var list = readCollapsed().filter(function(x) { return x !== id; });
+            if (nowCollapsed) list.push(id);
+            try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(list)); } catch (e) {}
+        });
+    });
+
+    ["sp-source", "sp-sev", "sp-window"].forEach(function(id) {
+        document.getElementById(id).addEventListener("change", loadRecentSyslog);
+    });
+    var spTimer = null;
+    document.getElementById("sp-q").addEventListener("input", function() {
+        clearTimeout(spTimer);
+        spTimer = setTimeout(loadRecentSyslog, 300);
+    });
+
     refresh();
     setInterval(refresh, 30000);
+    loadSyslogSources();
+    setInterval(loadSyslogSources, 60000);
     loadClock();
     setInterval(loadClock, 60000);
     loadHealth();
