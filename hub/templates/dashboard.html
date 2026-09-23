@@ -101,6 +101,7 @@ a:hover { text-decoration: underline; }
     font-weight: 600;
     color: var(--cyan);
     letter-spacing: 0.5px;
+    white-space: nowrap;
 }
 .header .status {
     font-size: 11px;
@@ -163,6 +164,17 @@ a:hover { text-decoration: underline; }
     overflow-y: auto;
 }
 .main-col > .section { flex: 0 0 auto; }
+.page-footer { flex: 0 0 auto; text-align: center; padding: 4px 0 8px; }
+.btn-small {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-dim);
+    background: var(--bg-card);
+}
+.btn-small:hover { color: var(--cyan); border-color: var(--cyan); text-decoration: none; }
 .scroll-x { overflow-x: auto; }
 
 .health-ok   { color: var(--green); }
@@ -193,6 +205,7 @@ a:hover { text-decoration: underline; }
     font-family: inherit;
     font-size: 12px;
     font-weight: 600;
+    line-height: 18px;
     padding: 4px 12px;
     border-radius: 4px;
     text-decoration: none;
@@ -210,6 +223,7 @@ a:hover { text-decoration: underline; }
     font-family: inherit;
     font-size: 12px;
     font-weight: 600;
+    line-height: 18px;
     padding: 4px 12px;
     border-radius: 4px;
     cursor: default;
@@ -705,6 +719,10 @@ a:hover { text-decoration: underline; }
                     Hub health is unavailable.
                 </div>
             </div>
+        </div>
+
+        <div class="page-footer">
+            <a class="btn-small" href="https://isitdns.com/" target="_blank" rel="noopener noreferrer">Is it DNS..?</a>
         </div>
     </div>
 

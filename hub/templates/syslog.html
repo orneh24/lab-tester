@@ -70,11 +70,16 @@ body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+/* Header matches the dashboard's: same font, sizes, padding and spacing. */
 header {
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-card);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--bg-card);
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', 'Monaco', monospace;
 }
-header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+header h1 {
+    font-size: 16px; margin: 0; font-weight: 600;
+    color: var(--cyan); letter-spacing: 0.5px; white-space: nowrap;
+}
 
 /* Same nav pair as the dashboard's header: a link to the other page, and a
    non-clickable marker for the page you're already on. Kept identical
@@ -86,6 +91,7 @@ header h1 { font-size: 15px; margin: 0; font-weight: 600; }
     font-family: inherit;
     font-size: 12px;
     font-weight: 600;
+    line-height: 18px;
     padding: 4px 12px;
     border-radius: 4px;
     text-decoration: none;
@@ -98,12 +104,13 @@ header h1 { font-size: 15px; margin: 0; font-weight: 600; }
     font-family: inherit;
     font-size: 12px;
     font-weight: 600;
+    line-height: 18px;
     padding: 4px 12px;
     border-radius: 4px;
     cursor: default;
 }
 .theme-toggle { cursor: pointer; margin-left: 8px; }
-.status { margin-left: auto; color: var(--text-dim); font-size: 12px; }
+.status { margin-left: auto; color: var(--text-dim); font-size: 11px; }
 .filters {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     padding: 10px 16px; border-bottom: 1px solid var(--border);
