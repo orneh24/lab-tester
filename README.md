@@ -64,26 +64,33 @@ a VM that's already configured, since re-running `build-template.sh` there
 wipes the existing config/hostname or the hub's database.
 
 **Alternative — a single VM, no cloning.** On a fresh Alpine install that
-won't be cloned, run one of these as root to download and launch `install.sh`
-in one go. Fresh VM only: an existing `/root/mesh-probe` would make the `mv`
-put the new copy inside it.
+won't be cloned, run this as root. It downloads the repo and starts
+`install.sh`, which asks whether the VM becomes a hub or a node and confirms
+before building. Fresh VM only: an existing `/root/mesh-probe` would make the
+`mv` put the new copy inside it.
 
 ```sh
-# no parameters: asks hub or node, then confirms
 wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh
-
-# hub: skips the menu, still confirms
-wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh hub
-
-# hub -y: unattended hub build, asks nothing
-wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh hub -y
-
-# node: skips the menu, still confirms
-wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh node
-
-# node -y: unattended node build, asks nothing
-wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh node -y
 ```
+
+When the build finishes, the VM is not running as its role yet. Finish it in
+place:
+
+- **Hub** — the build enables the service but does not start it. Log out
+  and back in and `hub-setup.sh` offers to do all three steps, or run them
+  by hand:
+
+  ```sh
+  set-static-ip <hub-ip>/<cidr> <gateway> [dns] [hostname]
+  rc-service networking restart
+  rc-service mesh-probe-hub start
+  ```
+
+- **Node** — the build leaves it unconfigured on purpose. Log out and back
+  in and `node-setup.sh` offers to configure it, or run
+  `/usr/local/bin/mesh-probe/setup.sh`. The build also ends with template
+  clean-up (zeroing free space, "convert to template"); on a single VM,
+  ignore that.
 
 **VMware guestinfo parameters** — set as custom keys on the VM in vCenter
 (VM Options → Advanced → Configuration Parameters, or PowerCLI's

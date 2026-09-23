@@ -5,9 +5,10 @@
 # when the hub hasn't been configured yet, or by hand at any time. Safe to
 # re-run; does nothing once configured unless you pass --force.
 #
-# This only handles the static IP -- the one manual step DEPLOYMENT.md gates
-# the rest of the build on. hub.env defaults are sane enough not to need a
-# prompt; edit it by hand afterward if they don't suit.
+# Sets the static IP, restarts networking and starts mesh-probe-hub -- every
+# step between a finished build and a working dashboard. hub.env defaults are
+# sane enough not to need a prompt; edit it by hand afterward if they don't
+# suit.
 
 set -eu
 
@@ -85,7 +86,16 @@ rc-service networking restart
 
 date -u '+%Y-%m-%dT%H:%M:%SZ configured' > "$STAMP"
 
+# The build only enables the hub at boot; start it now so the dashboard is up
+# without a reboot. restart, not start: it also covers a hub that is already
+# running. Not fatal -- the IP is set and stamped either way, and the fix is
+# the same command by hand.
 echo
-echo "Static IP set. Dashboard: http://${IP_CIDR%/*}/"
+if rc-service mesh-probe-hub restart; then
+    echo "Hub running. Dashboard: http://${IP_CIDR%/*}/"
+else
+    echo "Static IP set, but mesh-probe-hub failed to start."
+    echo "Check: rc-service mesh-probe-hub status"
+fi
 echo "Edit /opt/mesh-probe-hub/hub.env if the defaults don't suit, then:"
 echo "  rc-service mesh-probe-hub restart"

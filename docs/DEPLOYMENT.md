@@ -152,6 +152,8 @@ does, not as build steps to follow.
       written by `build-template.sh` and every key is commented in place with
       what it does; `hub/app/config.py` is where they are read
 - [ ] `rc-service mesh-probe-hub start` — `rc-update` already ran in the script
+      (skip if `hub-setup.sh` already did it; restart instead if you then
+      edited `hub.env`)
 
 Verify before moving on:
 
