@@ -325,6 +325,7 @@ a:hover { text-decoration: underline; }
 }
 .indicator.pass { background: var(--green); }
 .indicator.fail { background: var(--red); }
+.indicator.slow { background: var(--yellow); }
 .indicator.none { background: var(--gray); color: var(--text-dim); }
 /* A detected traceroute path change is orthogonal to pass/fail, so this
    composes onto pass/fail/none as an inset highlight rather than replacing
@@ -621,6 +622,7 @@ a:hover { text-decoration: underline; }
                 <span>Connectivity Matrix</span>
                 <div class="legend">
                     <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Pass</div>
+                    <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div>Slow</div>
                     <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Fail</div>
                     <div class="legend-item"><div class="legend-dot" style="background:var(--gray)"></div>No data</div>
                     <!-- Built from TYPE_LABELS so it can never drift from what
@@ -825,6 +827,12 @@ a:hover { text-decoration: underline; }
     // fping reports a real decimal-ms average, not a date +%s whole-second
     // delta, so it behaves like http for timing purposes.
     var COARSE_TIMING = {ssh: 1, traceroute: 1, pmtu: 1, dns: 1, smb: 1, iperf3: 1, smtp: 1};
+    // A passing test slower than this (ms) shows amber instead of green.
+    // Coarse-timed tests only report whole seconds, so their thresholds are
+    // whole seconds too. traceroute and iperf3 are left out on purpose: their
+    // duration reflects unanswered hops or a fixed run length, not slowness.
+    // loss is the fping average RTT.
+    var LATENCY_WARN_MS = {http: 500, loss: 50, dns: 1000, ssh: 2000, pmtu: 2000, smb: 3000, smtp: 2000};
 
     var endpoints = [];
     var targets = [];
@@ -1377,6 +1385,11 @@ a:hover { text-decoration: underline; }
             var res = lookup[src + "|" + dst + "|" + types[t]];
             var cls = res ? (res.success ? "pass" : "fail") : "none";
             var tip = TYPE_NAMES[types[t]] + (res ? (res.success ? " — pass" : " — FAIL") : " — no data");
+            var warnMs = LATENCY_WARN_MS[types[t]];
+            if (res && res.success && warnMs && res.latency_ms > warnMs) {
+                cls = "slow";
+                tip += " (slow: " + Math.round(res.latency_ms) + " ms, warning above " + warnMs + " ms)";
+            }
             // A path change is orthogonal to pass/fail — composed onto the
             // traceroute cell's class rather than replacing it.
             if (types[t] === "traceroute") {

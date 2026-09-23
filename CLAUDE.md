@@ -274,7 +274,9 @@ keys set on the VM are read in-guest via `vmware-rpctool "info-get <key>"`:
 Precedence in `setup.sh`: **guestinfo → environment → prompt**, except
 `subnet`, which has one extra fallback before the prompt: derived from the
 interface's own DHCP lease (address + prefix already give you the network).
-If hostname is omitted it is derived as `<HOSTNAME_PREFIX>-<group-slug>`.
+If hostname is omitted it is derived as `<HOSTNAME_PREFIX>-<group-slug>-<ip>`
+(dots as hyphens, e.g. `test-node-site-a-10-1-1-10`), so two nodes in one
+group never collide (constraint 1).
 `group` is an arbitrary operator-chosen label — it clusters nodes on the
 dashboard and filters syslog by sender; it carries no network-topology
 meaning to the hub.

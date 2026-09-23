@@ -156,7 +156,7 @@ GROUP_NAME=${_group_name}
 SUBNET=${_subnet}
 
 # Explicit hostname. If empty, the hostname is derived as
-# <HOSTNAME_PREFIX>-<group>, e.g. test-node-site-a.
+# <HOSTNAME_PREFIX>-<group>-<ip>, e.g. test-node-site-a-10-1-1-10.
 NODE_HOSTNAME=${_hostname}
 HOSTNAME_PREFIX=test-node
 
@@ -197,6 +197,50 @@ fi
 . "$CONFIG_FILE"
 
 # -------------------------------------------------------------------
+# Detect IP, with a manual failsafe if DHCP never came through
+#
+# Runs before the hostname step because a derived hostname includes this
+# address. Uses the same lookup as register.sh, so the name's suffix always
+# matches the IP the node registers with.
+#
+# Nodes are DHCP by design, but a node with no address can never register
+# or be tested -- and nothing surfaces that anywhere except this VM's own
+# log (see register.sh's own IP check). Prompt for a one-time static
+# fallback rather than leaving the node silently absent from the mesh.
+#
+# This only helps when a human is actually watching. A firstboot run has
+# stdin redirected from /dev/null (firstboot.initd), so `read` there hits
+# an immediate EOF -- `|| _static_cidr=""` catches that explicitly rather
+# than letting `set -e` abort the rest of setup.sh over it.
+# -------------------------------------------------------------------
+MY_IP=$(ip -4 -o addr show scope global | awk 'NR==1 {split($4,a,"/"); print a[1]}')
+
+if [ -z "$MY_IP" ]; then
+    log "WARNING: no IP address detected (DHCP may have failed)"
+    printf 'No IP via DHCP. Static IP/CIDR to configure now (blank to skip): '
+    read -r _static_cidr || _static_cidr=""
+    if [ -n "$_static_cidr" ]; then
+        printf 'Gateway: '
+        read -r _static_gw || _static_gw=""
+        IFACE=$(ip -o link show | awk -F': ' '!/lo/{print $2; exit}')
+        cat > /etc/network/interfaces <<EOF
+auto lo
+iface lo inet loopback
+
+auto ${IFACE}
+iface ${IFACE} inet static
+    address ${_static_cidr}
+    gateway ${_static_gw}
+EOF
+        rc-service networking restart
+        MY_IP=$(ip -4 -o addr show scope global | awk 'NR==1 {split($4,a,"/"); print a[1]}')
+        log "Static IP configured on ${IFACE}: ${_static_cidr} via ${_static_gw}"
+    else
+        log "Skipped -- this node stays unreachable until DHCP succeeds or the network is fixed by hand"
+    fi
+fi
+
+# -------------------------------------------------------------------
 # Set a unique hostname
 #
 # Every clone comes off the template with the same hostname. The hub keys
@@ -205,7 +249,12 @@ fi
 # node then skips it as "self", testing nothing.
 #
 # Prefer an explicit name (guestinfo.meshprobe.hostname, captured into the config
-# above); otherwise derive one from the group this node belongs to.
+# above). Otherwise derive <prefix>-<group>-<ip>, e.g. test-node-site-a-10-1-1-10.
+# The group alone is not unique (two nodes in one group would collide), and
+# only the full address is: per-site subnets like 10.1.1.0/24 and 10.2.1.0/24
+# share their last two octets. A derived name is recomputed on every run, so
+# re-running setup.sh after the IP changes renames the node; the old hub
+# entry then ages out after HUB_STALE_ENDPOINT_HOURS.
 # -------------------------------------------------------------------
 HOSTNAME_PREFIX="${HOSTNAME_PREFIX:-test-node}"
 NODE_HOSTNAME="${NODE_HOSTNAME:-}"
@@ -219,7 +268,12 @@ if [ -n "$NODE_HOSTNAME" ]; then
     DESIRED_HOSTNAME="$NODE_HOSTNAME"
 else
     _slug=$(printf '%s' "$GROUP_NAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/-*$//')
-    DESIRED_HOSTNAME="${HOSTNAME_PREFIX}-${_slug}"
+    if [ -n "$MY_IP" ]; then
+        DESIRED_HOSTNAME="${HOSTNAME_PREFIX}-${_slug}-$(printf '%s' "$MY_IP" | tr '.' '-')"
+    else
+        DESIRED_HOSTNAME="${HOSTNAME_PREFIX}-${_slug}"
+        log "WARNING: no IP to make the derived hostname unique; using $DESIRED_HOSTNAME. Set an explicit hostname if another node shares group '$GROUP_NAME'."
+    fi
 fi
 
 CURRENT_HOSTNAME=$(hostname)
@@ -323,46 +377,7 @@ if [ -d "${SRC_DIR}/../services" ]; then
     cp -f "${SRC_DIR}/../services/login-status.sh" /etc/profile.d/mesh-probe-status.sh 2>/dev/null || true
 fi
 
-# -------------------------------------------------------------------
-# Detect hostname and IP, with a manual failsafe if DHCP never came through
-#
-# Nodes are DHCP by design, but a node with no address can never register
-# or be tested -- and nothing surfaces that anywhere except this VM's own
-# log (see register.sh's own IP check). Prompt for a one-time static
-# fallback rather than leaving the node silently absent from the mesh.
-#
-# This only helps when a human is actually watching. A firstboot run has
-# stdin redirected from /dev/null (firstboot.initd), so `read` there hits
-# an immediate EOF -- `|| _static_cidr=""` catches that explicitly rather
-# than letting `set -e` abort the rest of setup.sh over it.
-# -------------------------------------------------------------------
 MY_HOSTNAME=$(hostname)
-MY_IP=$(ip -4 -o addr show scope global | awk 'NR==1 {split($4,a,"/"); print a[1]}')
-
-if [ -z "$MY_IP" ]; then
-    log "WARNING: no IP address detected (DHCP may have failed)"
-    printf 'No IP via DHCP. Static IP/CIDR to configure now (blank to skip): '
-    read -r _static_cidr || _static_cidr=""
-    if [ -n "$_static_cidr" ]; then
-        printf 'Gateway: '
-        read -r _static_gw || _static_gw=""
-        IFACE=$(ip -o link show | awk -F': ' '!/lo/{print $2; exit}')
-        cat > /etc/network/interfaces <<EOF
-auto lo
-iface lo inet loopback
-
-auto ${IFACE}
-iface ${IFACE} inet static
-    address ${_static_cidr}
-    gateway ${_static_gw}
-EOF
-        rc-service networking restart
-        MY_IP=$(ip -4 -o addr show scope global | awk 'NR==1 {split($4,a,"/"); print a[1]}')
-        log "Static IP configured on ${IFACE}: ${_static_cidr} via ${_static_gw}"
-    else
-        log "Skipped -- this node stays unreachable until DHCP succeeds or the network is fixed by hand"
-    fi
-fi
 
 log "Hostname: $MY_HOSTNAME"
 log "IP: ${MY_IP:-none}"

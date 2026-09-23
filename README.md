@@ -63,6 +63,28 @@ and prints or runs the matching `build-template.sh` — it refuses outright on
 a VM that's already configured, since re-running `build-template.sh` there
 wipes the existing config/hostname or the hub's database.
 
+**Alternative — a single VM, no cloning.** On a fresh Alpine install that
+won't be cloned, run one of these as root to download and launch `install.sh`
+in one go. Fresh VM only: an existing `/root/mesh-probe` would make the `mv`
+put the new copy inside it.
+
+```sh
+# no parameters: asks hub or node, then confirms
+wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh
+
+# hub: skips the menu, still confirms
+wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh hub
+
+# hub -y: unattended hub build, asks nothing
+wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh hub -y
+
+# node: skips the menu, still confirms
+wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh node
+
+# node -y: unattended node build, asks nothing
+wget -O- https://github.com/orneh24/mesh-probe/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/mesh-probe-main /root/mesh-probe && sh /root/mesh-probe/install.sh node -y
+```
+
 **VMware guestinfo parameters** — set as custom keys on the VM in vCenter
 (VM Options → Advanced → Configuration Parameters, or PowerCLI's
 `New-AdvancedSetting`) before first boot, so a clone configures itself with
@@ -75,7 +97,7 @@ at first login.
 | `guestinfo.meshprobe.hub_url` | node | `http://10.0.0.100` | **required** |
 | `guestinfo.meshprobe.group` | node | `site-a` | **required** — clusters nodes on the dashboard, filters syslog by sender |
 | `guestinfo.meshprobe.subnet` | node | `10.1.1.0/24` | derived from the DHCP lease if omitted |
-| `guestinfo.meshprobe.hostname` | node | `test-node-site-a` | derived as `<prefix>-<group>` if omitted; must be unique lab-wide |
+| `guestinfo.meshprobe.hostname` | node | `test-node-site-a` | derived as `<prefix>-<group>-<ip>` if omitted; must be unique lab-wide |
 | `guestinfo.meshprobe.dns_server` | node | `10.0.0.53` | unset skips the DNS test entirely |
 | `guestinfo.meshprobe.dns_query` | node | `example.com` | name to resolve, used only when `dns_server` is set |
 | `guestinfo.hub.ip` | hub | `10.0.0.100/24` | with neither hub key set, `hub-setup.sh` prompts at first login instead |

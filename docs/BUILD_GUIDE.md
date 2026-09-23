@@ -366,7 +366,8 @@ flexible anyway since they can carry the whole configuration.
 5. OK → OK, then power on.
 
 `guestinfo.meshprobe.hostname` is optional — omit it and the name is derived from
-the group as `test-node-<group>` (so `site-a` becomes `test-node-site-a`).
+the group and the node's IP as `test-node-<group>-<ip>` (so `site-a` at
+10.1.1.10 becomes `test-node-site-a-10-1-1-10`).
 
 **With PowerCLI**, which is worth it from the second node onward:
 

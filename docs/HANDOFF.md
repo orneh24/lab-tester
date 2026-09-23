@@ -44,6 +44,24 @@ and intent only.
 
 ## Recent changes
 
+**Unique derived node hostnames (2026-09-23).** With no explicit name set,
+`setup.sh` derives `<HOSTNAME_PREFIX>-<group-slug>-<ip>`, dots as hyphens
+(`test-node-site-a-10-1-1-10`) — the full IP, since per-site subnets share
+last octets. IP detection now runs before the hostname step, using
+`register.sh`'s lookup. `guestinfo.meshprobe.hostname` / `NODE_HOSTNAME` still
+wins; no IP falls back to `<prefix>-<group-slug>` with a warning. The deploy
+script's `-WaitForRegistration` matches the VM name with or without the IP
+suffix. Updated CLAUDE.md, README, QUICKSTART, BUILD_GUIDE, config.sample.
+
+**Latency warning colour in the matrix (2026-09-23).** A passing test slower
+than its threshold shows amber ("Slow" in the legend) instead of green, with
+the measured value and threshold in the tooltip. Thresholds live in one JS
+table, `LATENCY_WARN_MS` in `dashboard.html` (http 500 ms, loss 50 ms avg
+RTT, dns 1 s, ssh/pmtu/smtp 2 s, smb 3 s; coarse-timed tests in whole
+seconds). traceroute and iperf3 are excluded — their duration measures
+unanswered hops or a fixed run length. Display only: `success` and every
+count of failing paths are unchanged.
+
 **Filters on the dashboard's Recent Syslog panel (2026-09-23).** The panel
 gets the `/syslog` page's Source, Severity ≤, Window (default 24 hours) and
 Search filters, still capped at 10 rows, replacing the fixed
@@ -672,15 +690,11 @@ but **nothing here works today**:
 
 ## Open items
 
-- **Renaming.** `mesh-probe` (and possibly the separate `lab-butler` project)
-  may get renamed — current name is generic and a poor search/package term.
-  Candidate: `lab-scout` (exact-name collision with an unrelated, low-traffic
-  GitHub project, `mithr4ndir/lab-scout`; judged low risk). Also floated:
-  something incorporating "Flux" paired with a network-related term — e.g.
-  `netflux`, `fluxmesh`, `fluxpath`, `fluxroute` — evoking traffic that
-  flows and shifts across paths, which fits the path-change-detection framing
-  in particular. None of these have been checked for name collisions. No
-  decision made, no renaming done yet — this is tracking only.
+- **Renaming — resolved 2026-09-23.** Renamed `lab-tester` → `mesh-probe`
+  (see Recent changes); the GitHub repo is now `orneh24/mesh-probe`. "Flux"
+  names (`mesh-flux`, to pair with the separate `gp-flux` traffic generator)
+  were checked and set aside as less descriptive. The separate `lab-butler`
+  project was not part of this rename.
 - **Syslog has never run on the real hub VM.** Everything so far is a local
   Python process on a workstation. Confirm the OpenRC service starts the
   listener, that UDP/514 binds under it (514 is privileged — the service runs
@@ -711,10 +725,13 @@ but **nothing here works today**:
   wrong, by design. A separate identity map would fix it properly, but is
   outside this project's scope now that device identity/configuration lives
   in the router project.
-- **Hostname is still the one per-clone input.** `setup.sh` takes it from
-  `guestinfo.meshprobe.hostname` or derives it from the group slug. Deriving it from
-  IP or MAC at first boot would remove the last manual step and the
-  duplicate-hostname failure mode (constraint 1).
+- **Hostname as a per-clone input — resolved 2026-09-23.** Derived
+  hostnames now include the node's IP (`<prefix>-<group-slug>-<ip>`), so
+  clones in the same group no longer collide (constraint 1). IP was chosen
+  over MAC because it reads at a glance on the dashboard. Caveats: a
+  derived name follows the IP, so re-running `setup.sh` after an IP change
+  renames the node (the old entry ages out after `HUB_STALE_ENDPOINT_HOURS`);
+  and a node with no IP at setup time falls back to `<prefix>-<group-slug>`.
 
 Management separation (a VRF-isolated router management plane, a
 dual-homed hub, SNMP polling, router config rendering) was designed and

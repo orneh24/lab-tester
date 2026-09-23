@@ -105,7 +105,7 @@ gone quiet (`configured` / `skipped` / `configured (guestinfo)` /
 | `HUB_URL` | yes | no trailing slash |
 | `GROUP_NAME` | yes | operator label, clusters the dashboard and filters syslog — no topology meaning |
 | `SUBNET` | no | CIDR; `setup.sh` derives it from the DHCP lease if left blank, prompts only if that also fails |
-| `NODE_HOSTNAME` | no | must be unique across the lab; derived from `GROUP_NAME` if empty |
+| `NODE_HOSTNAME` | no | must be unique across the lab; derived from `GROUP_NAME` plus the node's IP if empty |
 | `DNS_SERVER` | no | unset skips the DNS test entirely |
 | `ENABLE_IPERF` / `ENABLE_SMB` / `ENABLE_SMTP` | no | default false; each starts its own OpenRC service |
 | `AGENT_AUTOUPDATE` | no | default true; self-updates `test-cycle.sh` on each 5-min registration |

@@ -42,18 +42,21 @@ powered on with the right keys set before it ever boots.
 - Node keys: `guestinfo.meshprobe.hub_url`, `guestinfo.meshprobe.group`,
   `guestinfo.meshprobe.subnet` (optional — falls back to the DHCP lease),
   `guestinfo.meshprobe.hostname` (optional — derived as
-  `<HOSTNAME_PREFIX>-<group-slug>` when unset), `guestinfo.meshprobe.dns_server`
+  `<HOSTNAME_PREFIX>-<group-slug>-<ip>` when unset, IP dots as hyphens,
+  e.g. `test-node-site-a-10-1-1-10`), `guestinfo.meshprobe.dns_server`
   / `guestinfo.meshprobe.dns_query` (optional pair — DNS test only runs when
   `dns_server` is set). Precedence in-guest is guestinfo → environment →
   prompt.
 - **Constraint 1 (CLAUDE.md): `endpoints.hostname` is a PRIMARY KEY.**
   Two clones that resolve to the same in-guest hostname silently
   collapse to one row in the mesh — the second overwrites the first, and
-  every other node skips it as "self" or never sees it at all. A
-  deploy script that lets two nodes derive the same
-  `<HOSTNAME_PREFIX>-<group-slug>` (duplicate group labels, or a group
-  value that isn't unique after slugging) recreates this bug at the
-  provisioning layer, not the shell layer — check for it there.
+  every other node skips it as "self" or never sees it at all. The IP
+  suffix makes derived names unique, but three paths can still collide:
+  an explicit `guestinfo.meshprobe.hostname` reused across VMs; the
+  vCenter VM name `<NodeNamePrefix>-<group>`, where duplicate group
+  labels make the second clone fail on a name clash; and a node with no
+  IP at setup time, which falls back to `<HOSTNAME_PREFIX>-<group-slug>`.
+  All three are provisioning-layer problems — check for them there.
 - `-WhatIf` / `ShouldProcess` support is how this kind of script gets
   safely dry-run against a real vCenter; treat its absence on a
   state-changing cmdlet as a real finding, not a style nit.
@@ -146,9 +149,9 @@ clean.
 ## Example
 
 A change adds `-NodeGroups @("site-a","site-a","site-b")` support with no
-duplicate check → both `site-a` nodes derive the same
-`test-node-site-a` hostname → the second registration overwrites the
-first in `endpoints`, and the mesh silently runs with one fewer node
-than deployed. Flag this as a constraint-1 violation and require either
-a duplicate-check `throw` in the script or an explicit, stated
-uniqueness requirement in `-NodeGroups`'s parameter help.
+duplicate check → the derived hostnames would differ by IP, but both
+clones are named `test-node-site-a` in vCenter → the second `New-VM`
+fails on a duplicate VM name, partway through the run, and the mesh
+comes up one node short. Flag this and require either a duplicate-check
+`throw` before any clone is made, or a unique per-node VM name — and
+check `-WaitForRegistration` can still match that name to the node.
