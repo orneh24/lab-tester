@@ -2,7 +2,7 @@
 
 > **AI disclaimer:** This project was created using [Claude Code](https://claude.com/claude-code).
 
-Network end-to-end connectivity testing between nodes on a network. Goes
+Dynamic network end-to-end connectivity testing between nodes on a network. Goes
 beyond ICMP — validates real TCP connections (HTTP, SSH, SMB, SMTP, iperf3),
 packet loss/jitter, path MTU, DNS resolution and traceroute, optionally
 correlates failures against syslog from network devices on the path, and
@@ -123,6 +123,24 @@ devices logging to the hub at all.
 
 Full design and the constraints that must not regress are in
 [`CLAUDE.md`](CLAUDE.md).
+
+### Other hypervisors
+
+The documentation and testing were done primarily on vSphere, but any
+hypervisor that runs Alpine Linux should work — Proxmox/KVM, Hyper-V,
+VirtualBox, or bare metal. Nothing in the tests depends on VMware. Three
+conveniences do:
+
+- **Zero-touch setup** reads `guestinfo.*` keys, which only VMware provides.
+  Elsewhere the first-boot service finds none and stands down, and the
+  interactive setup prompt at first login takes over — same values, typed
+  in once per VM.
+- **The PowerCLI deploy script** (`deploy/`) is vSphere-only; clone and
+  power on VMs with your own hypervisor's tooling instead.
+- **`open-vm-tools`** is installed on both roles and won't start outside
+  VMware, so the dashboard's Hub Health panel shows that one service as not
+  running. Harmless; remove it from the build and from
+  `HUB_HEALTH_SERVICES` if the noise bothers you.
 
 > **Status:** the hub is exercised locally (this README's screenshot included).
 > See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for what's still unverified
