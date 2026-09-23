@@ -31,11 +31,13 @@ VM it names, not all at once.
 setup-alpine
 ```
 
-Then, once: `apk add --no-cache git && git clone
-https://github.com/orneh24/lab-tester.git /root/lab-tester` (dropbear alone
-can't receive scp/sftp — see stage 1's note if git isn't reachable from the
-VM). Then snapshot/clone it twice: one clone becomes the hub, one becomes
-the node golden image — both already have the checkout.
+Then, once: `wget -O-
+https://github.com/orneh24/lab-tester/archive/refs/heads/main.tar.gz | tar
+-xz -C /root && mv /root/lab-tester-main /root/lab-tester` — BusyBox `wget`
+and `tar` are already on the base image, so nothing is installed (dropbear
+alone can't receive scp/sftp — see stage 1's note if GitHub isn't reachable
+from the VM). Then snapshot/clone it twice: one clone becomes the hub, one
+becomes the node golden image — both already have the files.
 
 **2. Hub** — do this first; its IP gets baked into the node image (on the
 hub clone):
@@ -94,12 +96,12 @@ Everything downstream bakes these in. Settle them before touching a VM.
 - [ ] One VM from the alpine-virt ISO (BUILD_GUIDE 2–3)
 - [ ] `setup-alpine`, community repository enabled, core packages installed (4.1–4.2)
 - [ ] Get the project files onto the VM **once, before cloning**:
-      `apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester`.
-      `git` lives in Alpine's `main` repo, so this works even before
-      community is enabled. Both `hub/` and `node/` come along in the one
-      checkout, so this replaces copying files separately onto the hub and
-      node clones later (stages 2–3) — see the note below if git access
-      from the VM isn't available.
+      `wget -O- https://github.com/orneh24/lab-tester/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/lab-tester-main /root/lab-tester`.
+      Uses only BusyBox `wget`/`tar` and `ssl_client`, all on the base
+      image, so nothing is installed and it works even before community is
+      enabled. Both `hub/` and `node/` come along in the one download, so
+      this replaces copying files separately onto the hub and node clones
+      later (stages 2–3) — see the note below if the VM can't reach GitHub.
 - [ ] Snapshot or clone twice — this base becomes both the hub and the node
       image
 
@@ -109,7 +111,7 @@ the matching `build-template.sh`. It also refuses outright if the clone
 already looks built, since re-running `build-template.sh` on a configured
 system wipes it.
 
-> **No git access from the VM?** SCP the `hub/`/`node/` directories over
+> **VM can't reach GitHub?** SCP the `hub/`/`node/` directories over
 > instead (BUILD_GUIDE Appendix A.2 / B.2) — but not yet. A bare
 > `setup-alpine` install with only dropbear has **no `scp` or `sftp` binary
 > at all**; you need `apk add --no-cache openssh-client-default` first, and
@@ -135,7 +137,7 @@ does, not as build steps to follow.
 
 - [ ] Run `sh /root/lab-tester/install.sh hub` (asks to confirm, then runs
       `hub/build-template.sh`) or that script directly — already on the VM
-      if you cloned in stage 1; otherwise SCP `hub/` over first — see stage
+      if you downloaded it in stage 1; otherwise SCP `hub/` over first — see stage
       1's note
 - [ ] Set the static IP, either way:
       - **Guestinfo (zero-touch):** set `guestinfo.hub.ip` and
@@ -199,7 +201,7 @@ Verify before moving on:
 
 - [ ] Run `sh /root/lab-tester/install.sh node` (asks to confirm, then runs
       `node/build-template.sh`) or that script directly — already on the VM
-      if you cloned in stage 1; otherwise SCP `node/` over first — see stage
+      if you downloaded it in stage 1; otherwise SCP `node/` over first — see stage
       1's note
 - [ ] Log in — `node-setup.sh` runs automatically at this first interactive
       login (via `/etc/profile.d`) and asks `Configure this node now?
@@ -236,7 +238,7 @@ Verify before moving on:
       The rest of the script's cleanup (machine-id, dropbear host keys,
       logs, zero free space) doesn't need repeating — nothing after it
       touched those
-- [ ] `rm -rf /root/lab-tester` if you used a git checkout (stage 1) to get
+- [ ] `rm -rf /root/lab-tester` if you downloaded the repo (stage 1) to get
       the files onto the VM
 - [ ] Shut down, convert to template in vCenter
 

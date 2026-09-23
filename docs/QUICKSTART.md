@@ -17,7 +17,7 @@ VM it names, not all at once.
 vCenter into the two VMs below:
 
 ```sh
-apk add --no-cache git && git clone https://github.com/orneh24/lab-tester.git /root/lab-tester
+wget -O- https://github.com/orneh24/lab-tester/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/lab-tester-main /root/lab-tester
 ```
 
 **2. Hub VM** (the clone that becomes the hub — build this first, its IP

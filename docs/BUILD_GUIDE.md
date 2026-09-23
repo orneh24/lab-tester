@@ -38,10 +38,11 @@ Before starting, make sure you have:
   - Knowledge of which port groups map to each node's subnet
   - The hub VM's IP address or hostname (nodes push results here)
 - **The lab-tester project files**, reachable one of two ways:
-  - **Git (recommended):** the repo's clone URL, reachable from the VM.
-    `git` is in Alpine's `main` repository, so `git clone` works right after
-    `setup-alpine`, before you'd even enable `community` (§4.1). Once
-    cloned, `sh install.sh` at the repo root is the entry point — it asks
+  - **Download (recommended):** GitHub reachable from the VM over HTTPS.
+    `wget -O- https://github.com/orneh24/lab-tester/archive/refs/heads/main.tar.gz | tar -xz -C /root && mv /root/lab-tester-main /root/lab-tester`
+    uses only BusyBox `wget`/`tar` and `ssl_client`, all on the base image,
+    so it works right after `setup-alpine` with no `apk add` at all. Once
+    unpacked, `sh install.sh` at the repo root is the entry point — it asks
     hub or node and runs the matching `build-template.sh`
   - **SCP (fallback):** the files on a machine you can SCP from. A bare
     `setup-alpine` install has no `scp`/`sftp` binary at all — see
@@ -213,7 +214,7 @@ Before converting to a template, clean up the VM so each clone starts fresh.
 > hostname reset, logs, shell history, apk cache, zero-free-space) — check
 > either script's own final `log` output, which tells you so. Nothing to run
 > by hand here for either role. The one thing neither script cleans up is a
-> git checkout used to get the project files onto the VM in the first place
+> repo download used to get the project files onto the VM in the first place
 > (§1 / DEPLOYMENT stage 1) — `rm -rf /root/lab-tester` if you used one,
 > right before 5.3. 5.1/5.2 are kept below only as reference for what the
 > scripts do; 5.3-5.5 are the real remaining manual steps, for both roles.

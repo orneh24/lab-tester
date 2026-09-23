@@ -3,14 +3,40 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lab Connectivity Tester</title>
+<title>Network Connectivity Tester</title>
 <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+<script>
+// Set before first paint so a saved light choice doesn't flash dark on load.
+try {
+    if (localStorage.getItem('lab-theme') === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+    }
+} catch (e) {}
+function toggleTheme() {
+    var root = document.documentElement;
+    var light = root.getAttribute('data-theme') !== 'light';
+    if (light) root.setAttribute('data-theme', 'light');
+    else root.removeAttribute('data-theme');
+    try { localStorage.setItem('lab-theme', light ? 'light' : 'dark'); } catch (e) {}
+    syncThemeButton();
+}
+function syncThemeButton() {
+    var btn = document.getElementById('theme-toggle');
+    if (btn) btn.textContent =
+        document.documentElement.getAttribute('data-theme') === 'light' ? 'Dark mode' : 'Light mode';
+}
+</script>
 <style>
 :root {
     --bg:        #0d1117;
     --bg-card:   #161b22;
     --bg-hover:  #1c2128;
+    --bg-muted:  #21262d;
+    --bg-code:   #010409;
     --border:    #30363d;
+    --border-soft: #21262d;
+    --badge-bg:  #1a2332;
+    --badge-border: #253040;
     --text:      #c9d1d9;
     --text-dim:  #8b949e;
     --green:     #3fb950;
@@ -22,6 +48,28 @@
     --gray:      #484f58;
     --blue:      #58a6ff;
     --cyan:      #39d2c0;
+}
+:root[data-theme="light"] {
+    --bg:        #d9dee4;
+    --bg-card:   #e5e9ee;
+    --bg-hover:  #d3d9e0;
+    --bg-muted:  #d3d9e0;
+    --bg-code:   #dde2e8;
+    --border:    #b6bfca;
+    --border-soft: #d3d9e0;
+    --badge-bg:  #ddf4ff;
+    --badge-border: #b6e3ff;
+    --text:      #000000;
+    --text-dim:  #252b32;
+    --green:     #1a7f37;
+    --green-bg:  #dafbe1;
+    --red:       #cf222e;
+    --red-bg:    #ffebe9;
+    --yellow:    #9a6700;
+    --yellow-bg: #fff8c5;
+    --gray:      #d0d7de;
+    --blue:      #0969da;
+    --cyan:      #0b7a75;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -150,6 +198,7 @@ a:hover { text-decoration: underline; }
     text-decoration: none;
 }
 .btn-nav:hover { background: var(--cyan); color: var(--bg); text-decoration: none; }
+.theme-toggle { cursor: pointer; margin-left: 8px; }
 
 /* The current page's own nav button: same shape as .btn-nav, permanently in
    its "active" state and not a link — it marks where you are, not somewhere
@@ -235,7 +284,7 @@ a:hover { text-decoration: underline; }
 }
 .matrix td.self {
     cursor: default;
-    background: #0d1117;
+    background: var(--bg);
 }
 .cell-indicators {
     display: flex;
@@ -330,7 +379,7 @@ a:hover { text-decoration: underline; }
 .ep-table td {
     padding: 5px 8px;
     font-size: 12px;
-    border-bottom: 1px solid #21262d;
+    border-bottom: 1px solid var(--border-soft);
     white-space: nowrap;
 }
 .ep-table tr:hover td { background: var(--bg-hover); }
@@ -339,8 +388,8 @@ a:hover { text-decoration: underline; }
 .ep-table tr.clickable { cursor: pointer; }
 .ep-table .group-badge {
     display: inline-block;
-    background: #1a2332;
-    border: 1px solid #253040;
+    background: var(--badge-bg);
+    border: 1px solid var(--badge-border);
     border-radius: 3px;
     padding: 1px 6px;
     font-size: 10px;
@@ -418,12 +467,12 @@ a:hover { text-decoration: underline; }
 }
 .detail-test-status.pass { background: var(--green-bg); color: var(--green); }
 .detail-test-status.fail { background: var(--red-bg); color: var(--red); }
-.detail-test-status.none { background: #21262d; color: var(--text-dim); }
+.detail-test-status.none { background: var(--bg-muted); color: var(--text-dim); }
 .detail-test-meta {
     padding: 6px 12px;
     font-size: 11px;
     color: var(--text-dim);
-    border-bottom: 1px solid #21262d;
+    border-bottom: 1px solid var(--border-soft);
 }
 .detail-test-meta span { margin-right: 16px; }
 .detail-test-output {
@@ -434,7 +483,7 @@ a:hover { text-decoration: underline; }
     word-break: break-all;
     max-height: 200px;
     overflow: auto;
-    background: #010409;
+    background: var(--bg-code);
     color: var(--text-dim);
     line-height: 1.6;
 }
@@ -524,7 +573,7 @@ a:hover { text-decoration: underline; }
 
 <div class="header">
     <div class="header-left">
-        <h1>LAB CONNECTIVITY TESTER</h1>
+        <h1>NETWORK CONNECTIVITY TESTER</h1>
         <span class="btn-nav-current">Dashboard</span>
         <a href="/syslog" class="btn-nav">Syslog</a>
     </div>
@@ -539,6 +588,8 @@ a:hover { text-decoration: underline; }
         <span id="health-summary" class="health-ok">&mdash;</span>
         &nbsp;|&nbsp;
         <span id="clock" class="clock" title="Hub's own NTP sync state (chronyc tracking)">clock: --</span>
+        <button type="button" id="theme-toggle" class="btn-nav theme-toggle" onclick="toggleTheme()">Light mode</button>
+        <script>syncThemeButton();</script>
     </div>
 </div>
 

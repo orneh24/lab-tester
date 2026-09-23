@@ -217,7 +217,7 @@ change to `setup.sh`'s own logic.
    present) — both `build-template.sh` scripts are destructive on an
    already-configured system (node: wipes config/hostname; hub: wipes the
    results DB) and their only existing protection, self-deleting after a
-   successful run, disappears the moment the tree is re-cloned. Default
+   successful run, disappears the moment the repo is re-downloaded. Default
    confirmation is "no" before actually running a build; `-y`/`--yes` skips
    it for scripted use.
 2. **`node-setup.sh` + `node/services/login-setup.sh`** — the Node's

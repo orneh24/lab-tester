@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh — entry point for a freshly git-cloned lab-tester checkout on a
+# install.sh — entry point for a freshly downloaded lab-tester repo on a
 # fresh Alpine base VM. Asks whether this VM becomes a Hub or a Node, then
 # either runs or names the matching build-template.sh.
 #
@@ -13,7 +13,7 @@
 # re-run on a configured system: they wipe /etc/lab-tester/config and the
 # hostname, or the hub's results database, as their last step. Their only
 # existing protection against that is self-deleting after a successful run,
-# and that protection disappears the moment the tree is re-cloned.
+# and that protection disappears the moment the repo is re-downloaded.
 
 set -eu
 
@@ -71,7 +71,7 @@ case "$ROLE" in
 esac
 
 BUILD_SCRIPT="$SCRIPT_DIR/$ROLE/build-template.sh"
-[ -f "$BUILD_SCRIPT" ] || die "$BUILD_SCRIPT not found -- is this a full checkout?"
+[ -f "$BUILD_SCRIPT" ] || die "$BUILD_SCRIPT not found -- is this a full copy of the repo?"
 
 echo
 log "Role: $ROLE"
