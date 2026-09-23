@@ -44,6 +44,13 @@ and intent only.
 
 ## Recent changes
 
+**Light/Dark theme on the dashboard and syslog page (2026-09-23).** A
+Light/Dark button at the right end of each page's header. Dark stays the
+default; the choice is remembered per browser under one shared localStorage
+key, `mesh-probe-theme`, so switching on either page switches both. Pure
+CSS variables plus a small head script — no API or data change. Not to be
+confused with the syslog page's `#toggle-live` button (auto-refresh).
+
 **Project renamed lab-tester → mesh-probe (2026-09-23).**
 
 Full rename: install paths, OpenRC services (`mesh-probe-hub`,
