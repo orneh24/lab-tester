@@ -57,8 +57,8 @@ No migration path: VMs built before the rename must be rebuilt from new
 templates, and their vCenter guestinfo keys renamed. An old node pointed at a
 new hub pulls the new `test-cycle.sh`, fails its trial run on the missing
 `/etc/mesh-probe/config`, and restores its `.known-good` copy — so it keeps
-testing, but on old code, until rebuilt. The GitHub repo itself must be
-renamed to `orneh24/mesh-probe` for the documented download command to work.
+testing, but on old code, until rebuilt. The GitHub repo was renamed to
+`orneh24/mesh-probe` the same day; the old URL redirects.
 
 **Dashboard: Recent Changes / Recent Syslog panels, syslog page nav and controls (2026-09-20).**
 

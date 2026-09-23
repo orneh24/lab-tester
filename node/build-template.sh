@@ -202,7 +202,7 @@ mkdir -p /etc/mesh-probe /root/.ssh
 chmod 700 /root/.ssh
 
 if [ ! -f /etc/mesh-probe/id_mesh_probe ]; then
-    ssh-keygen -t ed25519 -N '' -C 'mesh-probe-mesh' -f /etc/mesh-probe/id_mesh_probe
+    ssh-keygen -t ed25519 -N '' -C 'mesh-probe' -f /etc/mesh-probe/id_mesh_probe
 fi
 chmod 600 /etc/mesh-probe/id_mesh_probe
 chmod 644 /etc/mesh-probe/id_mesh_probe.pub

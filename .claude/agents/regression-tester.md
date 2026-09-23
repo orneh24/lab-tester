@@ -48,7 +48,7 @@ duplicates make clones overwrite each other and the mesh collapses to one
 entry, which every node then skips as "self".
 
 ```sh
-grep -n "hostname TEXT PRIMARY KEY" hub/app/app.py
+grep -nE "hostname +TEXT PRIMARY KEY" hub/app/app.py
 grep -n "mesh-probe-template" node/build-template.sh
 grep -n "/etc/hostname" node/scripts/setup.sh
 ```
